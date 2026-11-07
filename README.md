@@ -2,6 +2,8 @@
 
 แอป Windows สำหรับสำรองไฟล์แบบเข้ารหัสไปยัง **Google Drive**, **External HDD/SSD** หรือ **โฟลเดอร์ที่กำหนดเอง** พร้อมกู้คืนบนเครื่องใหม่ด้วยกุญแจกู้คืน หน้าต่างเป็น WPF native ภาษาไทย ไม่มี Electron หรือ browser runtime ค้างเบื้องหลัง
 
+[หน้าแอป](https://sanchatmd-dev.github.io/PCAutobackup/) · [นโยบายความเป็นส่วนตัว](https://sanchatmd-dev.github.io/PCAutobackup/privacy.html) · [เงื่อนไขการใช้](https://sanchatmd-dev.github.io/PCAutobackup/terms.html)
+
 ## ความสามารถ
 
 - สำรองวันละครั้งผ่าน Windows Task Scheduler; ปิดหน้าต่างได้ worker จะเปิดเฉพาะเวลาทำงานแล้วออก ไม่ต้องมีโปรเซส resident ระหว่างรอบ

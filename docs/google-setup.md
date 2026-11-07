@@ -19,6 +19,16 @@
 
 สถานะ **Testing** จำกัดผู้ใช้ตามรายการนี้ และ refresh token ของแอป External/Testing ที่ขอสิทธิ์ Drive มีอายุ 7 วันตามเงื่อนไขของ Google จึงไม่เหมาะกับงานอัตโนมัติระยะยาวโดยไม่กลับมาเชื่อมต่อใหม่ การใช้จริงควรตรวจข้อกำหนดและตั้งสถานะ Production ให้เรียบร้อยก่อนพึ่งพาตารางสำรอง ดู [Token expiration](https://developers.google.com/identity/protocols/oauth2#expiration)
 
+### ใช้งานระยะยาว: เปลี่ยนเป็น Production
+
+1. หาก **Audience → Publish app** ถูกปิดและแจ้งให้ตั้งค่า Branding ให้เปิด **Branding** และใส่หน้าแอป นโยบายความเป็นส่วนตัว เงื่อนไขการใช้ และ Authorized domain ที่สอดคล้องกับเว็บไซต์ของคุณ ห้ามใส่ลิงก์สมมติหรือโดเมนที่คุณควบคุมไม่ได้
+2. โครงการนี้เผยแพร่หน้าแอปที่ [sanchatmd-dev.github.io/PCAutobackup](https://sanchatmd-dev.github.io/PCAutobackup/) พร้อม `privacy.html` และ `terms.html` ผ่าน GitHub Pages โดยใช้ Authorized domain `sanchatmd-dev.github.io` ผู้ที่ fork ต้องเปลี่ยนเว็บไซต์และนโยบายให้ตรงกับผู้ดูแลและพฤติกรรมของตนเอง
+3. กด **Save** ใน Branding แล้วกลับไป **Audience → Publish app** อ่านหน้าต่าง **Push to production?** และกด **Confirm** เมื่อต้องการเปลี่ยนสถานะ ตรวจว่าแสดง **In production** จริง
+4. กลับมาแอป กด **เชื่อมต่อ Google** อีกครั้ง เลือกบัญชีเดิมและอนุญาตสิทธิ์เดิม เพื่อรับการอนุญาตหลังเปลี่ยนสถานะ ไม่ต้องเปลี่ยน Desktop client หรือกุญแจกู้คืน
+5. Production ไม่เท่ากับ Google ตรวจรับรองแบรนด์แล้ว และไม่ได้รับประกันว่า token จะไม่หมดอายุหรือถูกเพิกถอนด้วยเหตุอื่น การใช้งานส่วนตัวอาจเข้าข้อยกเว้นการตรวจรับรอง แต่การแจกจ่ายสาธารณะต้องตรวจข้อกำหนดเพิ่มเติม ดู [Manage App Audience](https://support.google.com/cloud/answer/15549945) และ [Brand verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/brand-verification)
+
+ตรวจจริงเมื่อ 7 พฤศจิกายน 2026: หลังเพิ่มเว็บไซต์และลิงก์นโยบาย ปุ่ม Publish app ใช้งานได้ และโปรเจกต์ของผู้ใช้แสดง In production แล้ว ไม่ได้เพิ่ม Drive scope ให้กว้างกว่า `drive.file`
+
 ## 3. สร้าง Desktop client
 
 1. เปิด **Clients**, **Create client**
@@ -49,6 +59,12 @@ Desktop client ใช้ system browser และ loopback redirect พร้อ
 แอปจะสร้างโฟลเดอร์ต้นทางที่มีชื่อพร้อมรหัสคงที่ภายในปลายทางกู้คืน ห้ามตีความชื่อโฟลเดอร์ที่ต่างจาก Source ว่าไฟล์ผิด และอย่าใช้แค่ชื่อ snapshot เป็นหลักฐานว่ากู้คืนครบ
 
 เมื่อย้ายคอม ต้องมี recovery key, บัญชี Google เดิม และ OAuth application/project เดิม การคัดลอกเฉพาะ configuration ที่มี DPAPI จาก Windows เครื่องเดิมไม่เพียงพอ
+
+## 6. เปิดสำรองรายวัน
+
+เลือกโฟลเดอร์ที่ต้องการใน **โฟลเดอร์ต้นทาง** จากนั้นเปิด **การตั้งค่า → เปิดสำรองอัตโนมัติทุกวัน** ตั้งเวลา เช่น `21:00` และกด **บันทึกการตั้งค่า** ตรวจด้วยว่า Windows Task Scheduler มีงาน `PCAutobackup-<DeviceId>` สถานะ Ready และ Next Run Time ตรงกับเวลาที่ต้องการ แอปใช้เขตเวลาของ Windows
+
+เครื่องต้องเปิดอยู่ มีผู้ใช้ Windows บัญชีเดิมลงชื่อเข้าใช้ และเข้าถึงต้นทาง/อินเทอร์เน็ตได้ ปิดหน้าต่างแอปได้ Worker จะทำงานแล้วออก งานที่พลาดอาจทำภายหลังเมื่อเครื่องพร้อมหรือหลังลงชื่อเข้าใช้ตามเงื่อนไขของ scheduler และตัว worker อย่าย้ายโฟลเดอร์โปรแกรมหลังตั้งเวลาโดยไม่บันทึกตารางใหม่ และเก็บ recovery key นอกเครื่องก่อนพึ่งพาการสำรองระยะยาว
 
 ## ข้อผิดพลาดที่พบบ่อย
 
