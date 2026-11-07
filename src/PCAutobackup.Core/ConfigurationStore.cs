@@ -35,6 +35,7 @@ public static class ConfigurationStore
         if (config.RetentionDays < 0) throw new ArgumentException("จำนวนวันต้องไม่ติดลบ");
         if (config.QuotaBytes is <= 0) throw new ArgumentException("เพดานพื้นที่ต้องมากกว่า 0 หรือไม่กำหนด");
         if (!TimeOnly.TryParseExact(config.DailyTime, "HH:mm", out _)) throw new ArgumentException("เวลาต้องอยู่ในรูปแบบ HH:mm");
+        _ = BackupSchedule.GetTimes(config);
         if (!Guid.TryParseExact(config.DeviceId, "N", out _)) throw new ArgumentException("รหัสเครื่องไม่ถูกต้อง");
         if (!Enum.IsDefined(config.Destination)) throw new ArgumentException("ปลายทางไม่ถูกต้อง");
         if (config.Sources is null) throw new ArgumentException("รายการโฟลเดอร์ไม่ถูกต้อง");

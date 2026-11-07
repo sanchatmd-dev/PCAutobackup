@@ -91,7 +91,8 @@ public partial class MainWindow : Window
         ClientIdBox.Text = config.GoogleClientId;
         ClientSecretBox.Password = config.GoogleClientSecret;
         ScheduleEnabledBox.IsChecked = config.ScheduleEnabled;
-        DailyTimeBox.Text = config.DailyTime;
+        var times = BackupSchedule.GetTimes(config);
+        DailyTimeBox.Text = string.Join(", ", times);
         RetentionBox.Text = config.RetentionDays.ToString(CultureInfo.InvariantCulture);
         QuotaBox.Text = config.QuotaBytes is { } quota ? (quota / 1_000_000_000m).ToString("0.#########", CultureInfo.InvariantCulture) : "";
         InventoryBox.IsChecked = config.IncludeApplicationInventory;
@@ -99,8 +100,8 @@ public partial class MainWindow : Window
         SourcesList.ItemsSource = null;
         SourcesList.ItemsSource = config.Sources;
         EmptySources.Visibility = config.Sources.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        ScheduleText.Text = config.ScheduleEnabled ? config.DailyTime : "ยังไม่เปิด";
-        ScheduleCaption.Text = config.ScheduleEnabled ? "ทุกวัน ตามเวลาของ Windows" : "ตั้งเวลาได้ในการตั้งค่า";
+        ScheduleText.Text = !config.ScheduleEnabled ? "ยังไม่เปิด" : times.Count == 1 ? times[0] : $"{times.Count} รอบ / วัน";
+        ScheduleCaption.Text = config.ScheduleEnabled ? string.Join(", ", times) + " · เวลาของ Windows" : "ตั้งเวลาได้ในการตั้งค่า";
         RetentionText.Text = config.RetentionDays == 0 ? "ชุดล่าสุด" : $"{config.RetentionDays:N0} วัน";
         DestinationSummary.Text = config.Destination == DestinationKind.GoogleDrive
             ? "Google Drive · " + (config.GoogleEmail ?? "ยังไม่ได้เชื่อมต่อ")
@@ -260,7 +261,7 @@ public partial class MainWindow : Window
     {
         await RunJobAsync("กำลังบันทึกการตั้งค่า…", async ct =>
         {
-            if (!TimeOnly.TryParseExact(DailyTimeBox.Text.Trim(), "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out _)) throw new InvalidOperationException("ระบุเวลาแบบ 24 ชั่วโมง เช่น 21:00");
+            var times = BackupSchedule.ParseTimes(DailyTimeBox.Text.Trim());
             if (!int.TryParse(RetentionBox.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var days) || days < 0) throw new InvalidOperationException("จำนวนวันต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป");
             long? quota = null;
             if (!string.IsNullOrWhiteSpace(QuotaBox.Text))
@@ -269,7 +270,8 @@ public partial class MainWindow : Window
                 quota = checked((long)(gb * 1_000_000_000m));
                 if (quota == 0) throw new InvalidOperationException("โควตามีขนาดเล็กเกินไป");
             }
-            _service.Configuration.DailyTime = DailyTimeBox.Text.Trim();
+            _service.Configuration.DailyTimes = times;
+            _service.Configuration.DailyTime = times[0];
             _service.Configuration.RetentionDays = days;
             _service.Configuration.QuotaBytes = quota;
             await _service.SetScheduleAsync(ScheduleEnabledBox.IsChecked == true);

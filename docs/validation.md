@@ -5,7 +5,7 @@ Environment: Windows 11 Home Single Language x64 (10.0.26200), .NET SDK 10.0.403
 ## Automated checks
 
 - Solution build: 0 warnings, 0 errors.
-- xUnit suite: **46 passed, 0 failed, 0 skipped**.
+- xUnit suite: **67 passed, 0 failed, 0 skipped**.
 - Covers authenticated encrypted round-trip, multi-chunk files, UTF-8 names, empty directories, source reorder, changed/deleted files, positive/default retention and latest-only retention, quota refusal, missing source, cancellation, wrong key/device, corrupt chunk, path traversal, destination conflict, unknown objects and reuse without downloading committed chunks.
 - Service tests cover new-PC restore with exported key, DPAPI persistence, invalid key import, stale configuration revision, foreign recovery key isolation, missing scheduled configuration, preflight status, postcommit status failures and local lease contention.
 - Mocked Google transport tests cover OAuth state/scope validation, token refresh, paging, duplicate detection, object naming/scope, cancellation, resumable uploads, ambiguous response probes and upload-session URI validation. These do not replace live Google testing.
@@ -48,10 +48,22 @@ A different configuration/device ID imported the recovery key, selected the repo
 - With the desktop closed, the packaged Worker completed an initial backup of the authorized directory: **24 files / 31,110,907 bytes**, **106.95 s**, peak working set **88,137,728 bytes (84.1 MiB)**, exit code **0**. The desktop reopened and displayed the successful snapshot and daily time; it was then closed again to avoid resident UI memory. This onboarding backup is distinct from the earlier synthetic recovery tests; these 24 files were not restored in this step.
 - Private source paths, file names, credentials, tokens and recovery-key contents were not added to this repository. Local evidence is in ignored `artifacts/setup/production-first-backup.json` and setup screenshots. The first future 21:00 timed trigger has not yet been observed.
 
+## Retention, quota and scheduling update — 2026-11-07
+
+- Added a controlled TimeProvider to the service/engine. Synthetic tests use isolated local repositories and do not alter Windows time, the user's cloud retention, quota or source files.
+- Real encrypted snapshots at ages 8 days, exactly 7 days, 3 days and current: only the expired snapshot and its exclusive chunk were removed. Shared chunks, the exact-boundary snapshot and unrelated files survived. All three retained snapshots restored with matching SHA-256.
+- A 20,000-byte quota removed older versions until the latest fit, while retaining shared data. Reducing the quota to 1 byte rejected the next snapshot, removed its staged chunk, preserved the previous successful snapshot and restored it correctly. Unrelated repository files remained byte-identical.
+- Multiple source folders already existed. Tests now additionally cover identical folder/file names, reordered sources, and deleting from only one source without affecting the other.
+- Added 1–24 daily times with validation, preserved legacy single-time configuration, and tested midnight, multiple missed days, repeated catch-up invocations, disabled schedules, failed retries, and DST boundaries. A successful job started before a scheduled round no longer hides that round merely because it completed later.
+- Packaged native UI saved three custom times to an isolated local configuration. Windows accepted three calendar triggers plus logon, unlock and resume triggers. With the desktop closed, automatic runs at **19:13** and **19:14 +07:00** both backed up the two synthetic sources and exited with task result 0.
+- A third isolated run invoked through Task Scheduler caught up an intentionally overdue round; a repeated invocation skipped it without creating another snapshot. All three synthetic snapshots restored both folders with matching SHA-256. The temporary task was removed. Task XML uses invariant Gregorian dates even under Thai Windows culture.
+- The user's task was re-registered from the new scheduler XML, preserving **21:00 once daily**, current account, sources, retention and quota. It now checks overdue rounds one minute after logon, unlock or the Windows resume event, with StartWhenAvailable enabled and WakeToRun disabled. The production window's accessibility was unavailable, so registration was completed through the scheduler XML/API and independently inspected in Windows.
+- Local evidence is under ignored `artifacts/validation/`: TRX results, native UI screenshot, task XML, automatic worker statuses and synthetic repository. No credentials, private source names or recovery keys are committed.
+
 ## Not verified / current limits
 
 - Long-duration Google token refresh, provider interruptions, and restore on a physically different Windows computer remain **not tested**. The live same-PC cloud round-trip above does not establish these outcomes.
 - No physical external-disk disconnect/reconnect or changed-drive-letter hardware test, no ARM64 runtime test, no Windows-version matrix.
-- Scheduler tested registration/manual trigger, not an overnight power-off/resume scenario. Interactive user logon is required.
+- Scheduler registration and two actual clock-triggered runs were verified; catch-up decisions were tested with a controlled clock. Physical sleep/reboot, Modern Standby variations and an overnight power-off/resume scenario have not been performed. Interactive user logon is required; Windows event delivery and network availability still matter.
 - Active manifest and chunk reference metadata still scale with dataset/history size. No full scrub/VSS/application-aware snapshots, app reinstallation, credential migration, or full OS restore.
 - Google Drive lacks cross-machine write coordination. One writer per repository only.

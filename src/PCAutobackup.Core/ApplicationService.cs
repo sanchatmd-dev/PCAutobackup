@@ -11,13 +11,18 @@ public sealed class ApplicationService
     public string ConfigurationPath { get; }
     public AppConfiguration Configuration { get; private set; } = new();
     private readonly SemaphoreSlim gate = new(1, 1);
+    private readonly TimeProvider timeProvider;
     private string? recoveryLocalPath;
     private string? recoveryGoogleFolder;
     private string? recoveryProtectedKey;
     private string StatusPath => ConfigurationPath + ".status.json";
     private string SuccessPath => ConfigurationPath + ".success.json";
 
-    public ApplicationService(string? configPath = null) => ConfigurationPath = Path.GetFullPath(configPath ?? AppPaths.ConfigurationFile);
+    public ApplicationService(string? configPath = null, TimeProvider? timeProvider = null)
+    {
+        ConfigurationPath = Path.GetFullPath(configPath ?? AppPaths.ConfigurationFile);
+        this.timeProvider = timeProvider ?? TimeProvider.System;
+    }
 
     public async Task<AppConfiguration> LoadConfigurationAsync()
     {
@@ -174,7 +179,7 @@ public sealed class ApplicationService
         try
         {
             using var configLock = OperationLock.Acquire(ConfigurationPath);
-            var status = new RunStatus { Status = "Running", StartedUtc = DateTimeOffset.UtcNow, Message = "กำลังสำรองข้อมูล" };
+            var status = new RunStatus { Status = "Running", StartedUtc = timeProvider.GetUtcNow(), Message = "กำลังสำรองข้อมูล" };
             try
             {
                 if (!File.Exists(ConfigurationPath)) throw new FileNotFoundException("ไม่พบไฟล์ตั้งค่าสำหรับงานสำรอง", ConfigurationPath);
@@ -184,10 +189,9 @@ public sealed class ApplicationService
                 {
                     if (!Configuration.ScheduleEnabled) return null;
                     var last = await GetLastSuccessAsync();
-                    var localPlanned = DateTime.Today.Add(TimeOnly.ParseExact(Configuration.DailyTime, "HH:mm").ToTimeSpan());
-                    if (DateTime.Now < localPlanned) localPlanned = localPlanned.AddDays(-1);
-                    var planned = new DateTimeOffset(localPlanned);
-                    if (last?.CompletedUtc >= planned) return null;
+                    var planned = BackupSchedule.MostRecentDue(Configuration, timeProvider.GetUtcNow(), timeProvider.LocalTimeZone);
+                    // A job started before a round does not cover that round merely by ending later.
+                    if (last?.StartedUtc >= planned) return null;
                 }
                 if (Configuration.Sources.Count == 0) throw new InvalidOperationException("กรุณาเลือกโฟลเดอร์ต้นทางก่อนสำรอง");
                 if (!Configuration.RecoveryKeyAcknowledged) throw new InvalidOperationException("กรุณาส่งออกและเก็บกุญแจกู้คืนไว้นอกเครื่องก่อนเริ่มสำรอง");
@@ -196,7 +200,7 @@ public sealed class ApplicationService
                 await using var store = await OpenStoreAsync(false, ct);
                 using var repositoryLock = OperationLock.Acquire(RepositoryIdentity(false));
                 using var localLease = (store as LocalBackupStore)?.AcquireLease();
-                var engine = new BackupEngine(store, key);
+                var engine = new BackupEngine(store, key, timeProvider);
                 var config = Clone(Configuration);
                 if (config.IncludeApplicationInventory)
                 {
@@ -217,7 +221,7 @@ public sealed class ApplicationService
                 status.SnapshotId = result.SnapshotId;
                 status.FilesProcessed = result.FileCount;
                 status.BytesProcessed = result.TotalBytes;
-                status.CompletedUtc = DateTimeOffset.UtcNow;
+                status.CompletedUtc = timeProvider.GetUtcNow();
                 status.PeakWorkingSetBytes = Process.GetCurrentProcess().PeakWorkingSet64;
                 try
                 {
@@ -237,7 +241,7 @@ public sealed class ApplicationService
             {
                 status.Status = e is OperationCanceledException ? "Cancelled" : "Failed";
                 status.Message = SafeError(e);
-                status.CompletedUtc = DateTimeOffset.UtcNow;
+                status.CompletedUtc = timeProvider.GetUtcNow();
                 status.PeakWorkingSetBytes = Process.GetCurrentProcess().PeakWorkingSet64;
                 try { await ConfigurationStore.WriteJsonAtomicAsync(StatusPath, status); }
                 catch (Exception statusError) when (statusError is IOException or UnauthorizedAccessException) { }

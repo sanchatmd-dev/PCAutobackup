@@ -15,6 +15,8 @@ public sealed class AppConfiguration
     public int RetentionDays { get; set; } = 7;
     public long? QuotaBytes { get; set; }
     public string DailyTime { get; set; } = "21:00";
+    // Null preserves the time in configurations written by the single-time version.
+    public List<string>? DailyTimes { get; set; }
     public bool ScheduleEnabled { get; set; }
     public string GoogleClientId { get; set; } = "";
     public string GoogleClientSecret { get; set; } = "";

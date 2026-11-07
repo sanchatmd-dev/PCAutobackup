@@ -10,13 +10,15 @@ public sealed class BackupEngine
     private const int ChunkSize = 4 * 1024 * 1024;
     private readonly IBackupStore store;
     private readonly byte[] encryptionKey, namingKey;
+    private readonly TimeProvider timeProvider;
     private static readonly Regex ChunkId = new("^[a-f0-9]{64}$", RegexOptions.CultureInvariant);
     private static readonly Regex SnapshotId = new("^[0-9]{17}-[a-f0-9]{32}$", RegexOptions.CultureInvariant);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = false };
 
-    public BackupEngine(IBackupStore store, byte[] recoveryKey)
+    public BackupEngine(IBackupStore store, byte[] recoveryKey, TimeProvider? timeProvider = null)
     {
         this.store = store ?? throw new ArgumentNullException(nameof(store));
+        this.timeProvider = timeProvider ?? TimeProvider.System;
         if (recoveryKey is null || recoveryKey.Length != 32) throw new ArgumentException("Recovery key must be 32 bytes.", nameof(recoveryKey));
         encryptionKey = HMACSHA256.HashData(recoveryKey, Encoding.UTF8.GetBytes("PCAutobackup encryption v1"));
         namingKey = HMACSHA256.HashData(recoveryKey, Encoding.UTF8.GetBytes("PCAutobackup chunk names v1"));
@@ -182,7 +184,7 @@ public sealed class BackupEngine
         bool publicationAttempted = false;
         try
         {
-        var now = DateTimeOffset.UtcNow;
+        var now = timeProvider.GetUtcNow();
         var manifest = new Manifest { Id = now.ToString("yyyyMMddHHmmssfff", System.Globalization.CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N"), CreatedUtc = now, DeviceName = config.DeviceName };
         long count = 0, bytes = 0, uploaded = 0;
         byte[] buffer = new byte[ChunkSize];

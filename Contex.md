@@ -8,13 +8,17 @@
 - ปลายทางปรับได้: Google Drive (default), External HDD/SSD, local folder
 - Google account ที่ OAuth ยืนยันและอนุญาต Drive คือบัญชีปลายทาง ไม่ใช้ช่องรับรหัสผ่าน Google ในแอป
 - Default retention 7 วัน ผู้ใช้กำหนดจำนวนวันและเพดาน GB เอง; 0 วัน = latest-only; ไม่กำหนดโควตาเป็นค่าเริ่มต้น
-- สำรองหนักวันละครั้งเป็นค่าเริ่มต้น เวลา 21:00 ใน timezone เครื่อง ผู้ใช้ต้องเปิด schedule เองหลังตั้งค่าพร้อม
+- สำรองวันละครั้งเวลา 21:00 เป็นค่าเริ่มต้น รองรับ 1–24 เวลาต่อวันใน timezone เครื่อง ผู้ใช้ต้องเปิด schedule เองหลังตั้งค่าพร้อม
 - Repository เริ่มจากว่างที่ `sanchatmd-dev/PCAutobackup`; ใช้ checkout ใน workspace ปัจจุบัน
 - Root = Astra high; ทีมย่อยจำกัดตาม `AGENTS.md` รอบเริ่มต้นใช้ Terra high สำหรับ engine/review และ Sol high สำหรับ Google/native UI
 
 ## สถาปัตยกรรมที่เลือก
 
 เลือก .NET 10 / WPF เพราะเป็น native Windows UI โดยไม่มี Chromium resident กระบวนการ Desktop แยกจาก Worker และใช้ Core library ร่วมกัน Scheduler เปิด worker แล้ว worker ออกเมื่อสำรองเสร็จ จึงไม่มี polling daemon ค้างระหว่างรอบ
+
+`BackupSchedule` ตรวจรายการเวลา 1–24 ค่าที่ไม่ซ้ำ และหา latest due occurrence ใน timezone เครื่อง รองรับข้ามวันและ DST การตั้งค่า `DailyTimes = null` ใช้ `DailyTime` เก่าเพื่อรักษาเวลาเดิม UI บันทึก `DailyTimes` ที่เรียงแล้วและคง `DailyTime` เป็นค่าแรกเพื่อ compatibility งานอัตโนมัติเทียบ StartedUtc ของงานสำเร็จ ไม่ใช้ CompletedUtc เพื่อไม่ข้ามรอบที่มาถึงระหว่างงานก่อนหน้ากำลังทำอยู่
+
+Windows task มี calendar trigger ต่อเวลา, logon, session unlock และ Power-Troubleshooter resume event (หน่วง 1 นาที) พร้อม StartWhenAvailable, ไม่ปลุกเครื่อง, InteractiveToken ของผู้ใช้เดิม และ retry 5 นาที 3 ครั้ง งานตกค้างหลายรอบรวมเป็นการสำรองปัจจุบันครั้งเดียว ไม่มี daemon หรือการเก็บรหัสผ่าน Windows ใช้ TimeProvider ใน service/engine เพื่อทดสอบเวลาจำลองโดยไม่เปลี่ยนนาฬิกาเครื่อง
 
 `ApplicationService` เป็น facade ให้ UI และ worker ใช้: configuration persistence, recovery-key management, operation locking, Google integration, engine, schedule และสถานะงาน
 
@@ -51,7 +55,7 @@ Restore ไม่เขียนทับไฟล์เดิม ตรวจ r
 ## Validation และรายการก่อนส่งมอบ
 
 - Tests ใช้ synthetic temp directories เท่านั้น รวม round-trip, deletions, retention, quota, corruption, wrong key, path safety, failure/cancel, Google mocked transport, config และ recovery facade
-- Build Desktop/Worker Release ผ่านโดยไม่มี warning/error และ automated tests 46 ข้อผ่าน
+- Build Desktop/Worker Release ผ่านโดยไม่มี warning/error และ automated tests 67 ข้อผ่าน รวม retention/quota แบบข้อมูลร่วมกัน หลายเวลาต่อวัน catch-up และวันที่ Gregorian ใน task XML บน Thai culture
 - Native UI ตรวจหน้าต่าง package จริง และแก้ปัญหาสีตัวอักษรปุ่มที่พบจาก screenshot แล้ว
 - Synthetic 128 MiB worker backup/restore ผ่านและ SHA-256 ตรงกัน; peak working set 75.5 MiB รอบแรก / 44.6 MiB รอบไม่เปลี่ยนข้อมูล ไม่มีการรับประกันเพดาน RAM จากชุดทดสอบนี้
 - ลงทะเบียนและสั่ง temporary Task Scheduler task สำรอง synthetic data สำเร็จ แล้วลบ task ทดสอบออก ไม่ได้เปิด schedule ของผู้ใช้จริง
@@ -65,6 +69,16 @@ Restore ไม่เขียนทับไฟล์เดิม ตรวจ r
 - กุญแจที่ส่งออกระหว่างการทดลองยังอยู่บน PC ต้องเก็บสำเนานอกเครื่องสำหรับ disaster recovery
 - Build package self-contained ใน `artifacts/` (ignored); task path ต้องคงที่หลังลงทะเบียน
 - ดูผลล่าสุดและข้อจำกัดการทดสอบเพิ่มเติมใน `docs/validation.md` เมื่อสร้างแล้ว
+
+## การตรวจเพิ่มเติมและอัปเดตตาราง — 7 พฤศจิกายน 2026
+
+- ทดสอบตามคำขอผู้ใช้: กู้คืนข้อมูลจริง 24 ไฟล์จาก Drive ตรง SHA-256 ทุกไฟล์; หลังเพิ่ม/ลบ/เปลี่ยนชื่อ สำรองและกู้คืนครบ 23 ไฟล์ตรงทั้งหมด ไม่บันทึกรายชื่อส่วนตัวลง repo
+- ทดสอบ incremental จริง: ไฟล์จำลอง 12 MiB แก้ 1 byte ใน chunk กลาง อัปโหลดใหม่ 1 จาก 3 chunks และกู้คืนก่อน/หลังแก้ไขตรง SHA-256 ทั้งสองชุด คืนต้นฉบับหลังทดสอบแล้ว
+- Synthetic tests จำลองชุดอายุ 8 วัน, 7 วันพอดี, 3 วัน และล่าสุด: ลบเฉพาะชุดหมดอายุและ chunk ที่ไม่ถูกอ้างถึง; เก็บ shared chunk และกู้คืนทุกชุดที่เหลือได้ ทดสอบ quota 20,000 bytes ล้างเก่าจนเหลือล่าสุดและ quota 1 byte ปฏิเสธชุดใหม่โดยไม่เสียชุดล่าสุด
+- มีหลายโฟลเดอร์อยู่แล้ว ทดสอบชื่อโฟลเดอร์/ไฟล์ซ้ำกัน สลับลำดับและลบไฟล์ในโฟลเดอร์หนึ่ง ไม่กระทบอีกโฟลเดอร์
+- Native UI บันทึกสามเวลาลง task จำลองสำเร็จ และ Worker เริ่มอัตโนมัติจริงสองรอบเวลา 19:13 และ 19:14 ขณะปิดแอป สำรองสองโฟลเดอร์จำลองสำเร็จ exit 0 ทั้งคู่
+- ทดสอบรอบตกค้างผ่าน Task Scheduler บน config จำลอง ได้ชุดใหม่หนึ่งชุดและเรียกซ้ำแล้วข้าม กู้คืนทั้งสามชุดได้สองโฟลเดอร์ตรง SHA-256 แล้วลบ task จำลองออก
+- ลงทะเบียน task ผู้ใช้ใหม่ด้วย trigger หลัง logon/unlock/resume โดยคง 21:00 เพียงเวลาเดียว retention 7 วันและโควตาเดิม ไม่ได้สั่งเครื่องผู้ใช้ Sleep/reboot เพื่อทดสอบฮาร์ดแวร์จริง
 
 ## งานต่อยอด
 

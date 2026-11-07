@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Security;
 using System.Security.Principal;
 
@@ -24,21 +25,7 @@ public static class WindowsScheduler
         ConfigurationStore.Validate(config);
         var worker = FindWorker();
         var sid = WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("ไม่พบผู้ใช้ Windows");
-        var start = DateTime.Today.ToString("yyyy-MM-dd") + "T" + config.DailyTime + ":00";
-        static string E(string value) => SecurityElement.Escape(value)!;
-        var xml = $"""
-            <?xml version="1.0" encoding="UTF-16"?>
-            <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-              <RegistrationInfo><Description>PC AutoBackup daily encrypted backup; exits when complete.</Description></RegistrationInfo>
-              <Triggers>
-                <CalendarTrigger><StartBoundary>{start}</StartBoundary><Enabled>true</Enabled><ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger>
-                <LogonTrigger><Enabled>true</Enabled><UserId>{E(sid)}</UserId><Delay>PT3M</Delay></LogonTrigger>
-              </Triggers>
-              <Principals><Principal id="Author"><UserId>{E(sid)}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
-              <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>true</Hidden><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>7</Priority><RestartOnFailure><Interval>PT1H</Interval><Count>3</Count></RestartOnFailure></Settings>
-              <Actions Context="Author"><Exec><Command>{E(worker)}</Command><Arguments>--scheduled --config {E('"' + Path.GetFullPath(configurationPath) + '"')}</Arguments><WorkingDirectory>{E(Path.GetDirectoryName(worker)!)}</WorkingDirectory></Exec></Actions>
-            </Task>
-            """;
+        var xml = BuildTaskXml(config, configurationPath, worker, sid, DateTime.Today);
         var temporary = Path.Combine(Path.GetTempPath(), "PCAutobackup-task-" + Guid.NewGuid().ToString("N") + ".xml");
         try
         {
@@ -46,6 +33,31 @@ public static class WindowsScheduler
             await RunAsync(["/Create", "/TN", TaskName(config), "/XML", temporary, "/F"], ct);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
+    internal static string BuildTaskXml(AppConfiguration config, string configurationPath, string worker, string sid, DateTime today)
+    {
+        ConfigurationStore.Validate(config);
+        static string E(string value) => SecurityElement.Escape(value)!;
+        var date = today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var calendarTriggers = string.Join(Environment.NewLine, BackupSchedule.GetTimes(config).Select(time =>
+            $"<CalendarTrigger><StartBoundary>{date}T{time}:00</StartBoundary><Enabled>true</Enabled><ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger>"));
+        const string resumeQuery = "<QueryList><Query Id='0' Path='System'><Select Path='System'>*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1]]</Select></Query></QueryList>";
+        return $"""
+            <?xml version="1.0" encoding="UTF-16"?>
+            <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+              <RegistrationInfo><Description>PC AutoBackup daily encrypted backup; exits when complete.</Description></RegistrationInfo>
+              <Triggers>
+                {calendarTriggers}
+                <LogonTrigger><Enabled>true</Enabled><UserId>{E(sid)}</UserId><Delay>PT1M</Delay></LogonTrigger>
+                <SessionStateChangeTrigger><Enabled>true</Enabled><Delay>PT1M</Delay><UserId>{E(sid)}</UserId><StateChange>SessionUnlock</StateChange></SessionStateChangeTrigger>
+                <EventTrigger><Enabled>true</Enabled><Subscription>{E(resumeQuery)}</Subscription><Delay>PT1M</Delay></EventTrigger>
+              </Triggers>
+              <Principals><Principal id="Author"><UserId>{E(sid)}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+              <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>true</Hidden><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>7</Priority><RestartOnFailure><Interval>PT5M</Interval><Count>3</Count></RestartOnFailure></Settings>
+              <Actions Context="Author"><Exec><Command>{E(worker)}</Command><Arguments>--scheduled --config {E('"' + Path.GetFullPath(configurationPath) + '"')}</Arguments><WorkingDirectory>{E(Path.GetDirectoryName(worker)!)}</WorkingDirectory></Exec></Actions>
+            </Task>
+            """;
     }
 
     public static Task RemoveAsync(AppConfiguration config, CancellationToken ct = default) => RunAsync(["/Delete", "/TN", TaskName(config), "/F"], ct);
