@@ -1,0 +1,98 @@
+<Window x:Class="PCAutobackup.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="PCAutobackup — สำรองไว้อุ่นใจ" Width="1160" Height="830" MinWidth="950" MinHeight="680"
+        WindowStartupLocation="CenterScreen" Background="#F5F7F6" Foreground="{StaticResource Ink}" FontFamily="Leelawadee UI, Segoe UI" FontSize="14"
+        Loaded="Window_Loaded" Closing="Window_Closing">
+  <Grid>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="228"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <Border Background="#173E3C" Padding="20,30">
+      <DockPanel LastChildFill="True">
+        <StackPanel DockPanel.Dock="Top">
+          <Border Width="44" Height="44" Background="#2E625C" CornerRadius="12" HorizontalAlignment="Left" Margin="0,0,0,15">
+            <TextBlock Text="&#xE753;" FontFamily="Segoe MDL2 Assets" FontSize="23" Foreground="#D3EEE2" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+          </Border>
+          <TextBlock Text="PC AutoBackup" Foreground="White" FontSize="21" FontWeight="SemiBold"/>
+          <TextBlock Text="สำรองไว้อุ่นใจ" Foreground="#A9C9C1" Margin="0,5,0,30"/>
+          <Button x:Name="OverviewNav" Content="ภาพรวม" Tag="Overview" Click="Navigate_Click" Margin="0,0,0,8" HorizontalContentAlignment="Left"/>
+          <Button x:Name="SourcesNav" Content="โฟลเดอร์ต้นทาง" Tag="Sources" Click="Navigate_Click" Margin="0,0,0,8" HorizontalContentAlignment="Left"/>
+          <Button x:Name="DestinationNav" Content="พื้นที่จัดเก็บ" Tag="Destination" Click="Navigate_Click" Margin="0,0,0,8" HorizontalContentAlignment="Left"/>
+          <Button x:Name="HistoryNav" Content="ประวัติและกู้คืน" Tag="History" Click="Navigate_Click" Margin="0,0,0,8" HorizontalContentAlignment="Left"/>
+          <Button x:Name="SettingsNav" Content="การตั้งค่า" Tag="Settings" Click="Navigate_Click" HorizontalContentAlignment="Left"/>
+        </StackPanel>
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,30,0,0">
+          <Border BorderBrush="#3B605B" BorderThickness="0,1,0,0" Padding="0,18,0,0">
+            <StackPanel>
+              <TextBlock Text="ทำงานเฉพาะเมื่อจำเป็น" Foreground="#DAE9E3" FontWeight="SemiBold"/>
+              <TextBlock Text="ปิดหน้าต่างได้ตามปกติ&#x0a;Windows จะเริ่มงานตามเวลาที่ตั้งไว้" Foreground="#A9C9C1" FontSize="12" LineHeight="20" Margin="0,7,0,0"/>
+            </StackPanel>
+          </Border>
+          <TextBlock Text="เข้ารหัสก่อนจัดเก็บ • v1.0" Foreground="#7FA69E" FontSize="11" Margin="0,18,0,0"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+    <Grid Grid.Column="1">
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+      <Border Background="White" BorderBrush="#E1E8E6" BorderThickness="0,0,0,1" Padding="32,23">
+        <DockPanel>
+          <Button x:Name="ReloadConfigurationButton" DockPanel.Dock="Right" Content="รีเฟรชการตั้งค่า" Click="ReloadConfiguration_Click" FontSize="12" VerticalAlignment="Center" Margin="20,0,0,0"/>
+          <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right" Margin="20,0,0,0">
+            <TextBlock x:Name="DeviceText" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+            <TextBlock Text="Windows desktop backup" Foreground="{StaticResource Muted}" FontSize="11" HorizontalAlignment="Right" Margin="0,4,0,0"/>
+          </StackPanel>
+          <StackPanel>
+            <TextBlock x:Name="PageTitle" Text="ภาพรวม" FontSize="26" FontWeight="SemiBold"/>
+            <TextBlock x:Name="PageSubtitle" Text="ดูแลไฟล์สำคัญของคุณ ในจังหวะที่ตั้งไว้" Foreground="{StaticResource Muted}" Margin="0,5,0,0"/>
+          </StackPanel>
+        </DockPanel>
+      </Border>
+      <ScrollViewer x:Name="MainContent" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="32,26,32,12">
+        <StackPanel>
+          <StackPanel x:Name="OverviewPage">
+            <Border Background="#E8F2ED" BorderBrush="#D3E6DA" BorderThickness="1" CornerRadius="12" Padding="24" Margin="0,0,0,20">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel Margin="0,0,20,0">
+                  <TextBlock x:Name="ReadinessTitle" Text="เริ่มต้นปกป้องไฟล์ของคุณ" FontSize="22" FontWeight="SemiBold"/>
+                  <TextBlock x:Name="ReadinessText" Text="เลือกโฟลเดอร์ พื้นที่จัดเก็บ และเก็บกุญแจกู้คืนก่อนสำรองครั้งแรก" Foreground="#456D61" Margin="0,8,0,0" LineHeight="24"/>
+                </StackPanel>
+                <Button x:Name="BackupButton" Grid.Column="1" Content="สำรองตอนนี้" Style="{StaticResource PrimaryButton}" Click="Backup_Click" VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
+            <UniformGrid Columns="3" Margin="0,0,-12,0">
+              <Border Style="{StaticResource Card}" Margin="0,0,12,18"><StackPanel><TextBlock Text="โฟลเดอร์ที่เลือก" Style="{StaticResource Description}"/><TextBlock x:Name="SourceCountText" Text="0" FontSize="30" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Text="สำรองเฉพาะที่คุณเลือก" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,7,0,0"/></StackPanel></Border>
+              <Border Style="{StaticResource Card}" Margin="0,0,12,18"><StackPanel><TextBlock Text="สำรองอัตโนมัติ" Style="{StaticResource Description}"/><TextBlock x:Name="ScheduleText" Text="ยังไม่เปิด" FontSize="26" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock x:Name="ScheduleCaption" Text="ตั้งเวลาได้ในการตั้งค่า" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,7,0,0"/></StackPanel></Border>
+              <Border Style="{StaticResource Card}" Margin="0,0,12,18"><StackPanel><TextBlock Text="เก็บประวัติย้อนหลัง" Style="{StaticResource Description}"/><TextBlock x:Name="RetentionText" Text="7 วัน" FontSize="30" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Text="เก็บชุดล่าสุดที่กู้คืนได้เสมอ" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,7,0,0"/></StackPanel></Border>
+            </UniformGrid>
+            <Border Style="{StaticResource Card}"><StackPanel><TextBlock Text="พื้นที่จัดเก็บของคุณ" Style="{StaticResource SectionTitle}"/><TextBlock x:Name="DestinationSummary" Text="Google Drive · ยังไม่ได้เชื่อมต่อ" FontSize="16" Margin="0,6,0,5"/><TextBlock x:Name="LastBackupText" Text="ยังไม่มีข้อมูลการสำรองสำเร็จ" Style="{StaticResource Description}"/><TextBlock x:Name="LatestRunText" Text="ยังไม่มีงานสำรองที่บันทึกไว้" Style="{StaticResource Description}" FontSize="12" Margin="0,10,0,0"/><Button Content="จัดการพื้นที่จัดเก็บ →" Tag="Destination" Click="Navigate_Click" HorizontalAlignment="Left" Margin="0,18,0,0"/></StackPanel></Border>
+            <Border Style="{StaticResource Card}"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="38"/><ColumnDefinition/></Grid.ColumnDefinitions><TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" Foreground="{StaticResource Accent}" FontSize="23" Margin="0,4,0,0"/><StackPanel Grid.Column="1"><TextBlock Text="กุญแจกู้คืน คือทางกลับไปหาไฟล์ของคุณ" Style="{StaticResource SectionTitle}"/><TextBlock x:Name="KeySummary" Text="เก็บไฟล์กุญแจไว้นอกเครื่องนี้ เพื่อกู้คืนได้เมื่อเปลี่ยน PC หรือ Windows เสีย" Style="{StaticResource Description}"/><Button Content="จัดการกุญแจกู้คืน →" Tag="Settings" Click="Navigate_Click" HorizontalAlignment="Left" Margin="0,14,0,0"/></StackPanel></Grid></Border>
+          </StackPanel>
+          <StackPanel x:Name="SourcesPage" Visibility="Collapsed">
+            <Border Style="{StaticResource Card}"><StackPanel><DockPanel Margin="0,0,0,18"><Button DockPanel.Dock="Right" Content="＋ เพิ่มโฟลเดอร์" Click="AddSource_Click" Style="{StaticResource PrimaryButton}"/><StackPanel Margin="0,0,14,0"><TextBlock Text="เลือกสิ่งที่อยากเก็บไว้" Style="{StaticResource SectionTitle}"/><TextBlock Text="เพิ่มได้หลายโฟลเดอร์ เช่น เอกสาร รูปภาพ หรืองานของคุณ" Style="{StaticResource Description}"/></StackPanel></DockPanel><TextBlock x:Name="EmptySources" Text="ยังไม่ได้เลือกโฟลเดอร์ต้นทาง" Foreground="{StaticResource Muted}" Margin="0,16"/><ItemsControl x:Name="SourcesList"><ItemsControl.ItemTemplate><DataTemplate><Border BorderBrush="#E5ECE9" BorderThickness="0,0,0,1" Padding="0,15"><DockPanel><Button DockPanel.Dock="Right" Content="นำออก" Tag="{Binding Id}" Click="RemoveSource_Click" Margin="16,0,0,0"/><StackPanel><TextBlock Text="{Binding Label}" FontWeight="SemiBold" FontSize="15"/><TextBlock Text="{Binding Path}" Foreground="{StaticResource Muted}" Margin="0,5,0,0"/></StackPanel></DockPanel></Border></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></Border>
+            <TextBlock Text="เมื่อไดรฟ์ต้นทางหาย อ่านไฟล์ไม่ได้ หรืองานถูกยกเลิก ระบบจะไม่ถือว่าไฟล์เหล่านั้นถูกลบ และจะไม่เผยแพร่ชุดสำรองที่ไม่สมบูรณ์" Style="{StaticResource Description}"/>
+          </StackPanel>
+          <StackPanel x:Name="DestinationPage" Visibility="Collapsed">
+            <Border Style="{StaticResource Card}"><StackPanel><TextBlock Text="สำรองไปที่ไหน" Style="{StaticResource SectionTitle}"/><WrapPanel Margin="0,12,0,5"><RadioButton x:Name="GoogleRadio" GroupName="Destination" Content="Google Drive" Checked="Destination_Checked"/><RadioButton x:Name="ExternalRadio" GroupName="Destination" Content="HDD / SSD ภายนอก" Checked="Destination_Checked"/><RadioButton x:Name="LocalRadio" GroupName="Destination" Content="โฟลเดอร์อื่นในเครื่อง" Checked="Destination_Checked"/></WrapPanel>
+              <StackPanel x:Name="GooglePanel"><TextBlock Text="เชื่อมต่อผ่านเบราว์เซอร์ของระบบ โดยไม่ต้องบอกรหัสผ่านกับแอป" Style="{StaticResource Description}"/><TextBlock x:Name="GoogleAccountText" Text="ยังไม่ได้เชื่อมต่อบัญชี" FontWeight="SemiBold" FontSize="16" Margin="0,20,0,12"/><TextBlock Text="อีเมลสำหรับแนะนำบัญชี (ไม่บังคับ)" Margin="0,0,0,6"/><TextBox x:Name="EmailHintBox" MaxWidth="460" HorizontalAlignment="Stretch" AutomationProperties.Name="อีเมลสำหรับแนะนำบัญชี"/><WrapPanel Margin="0,14,0,0"><Button x:Name="SignInButton" Content="เชื่อมต่อ Google" Style="{StaticResource PrimaryButton}" Click="SignIn_Click" Margin="0,0,10,0"/><Button x:Name="DisconnectButton" Content="ยกเลิกการเชื่อมต่อ" Click="Disconnect_Click"/></WrapPanel><TextBlock Text="ชื่อบัญชีด้านบนจะแสดงจากข้อมูลที่ Google ยืนยันจริง สิทธิ์ Drive ใช้สำหรับไฟล์ที่แอปนี้สร้างหรือได้รับสิทธิ์เท่านั้น" Style="{StaticResource Description}" FontSize="12" Margin="0,16,0,0"/>
+                <Expander Header="การตั้งค่า Google OAuth สำหรับแอป" Margin="0,22,0,0"><StackPanel Margin="0,14,0,0"><TextBlock Text="ใช้ OAuth client ชนิด Desktop app จาก Google Cloud ของคุณ ไม่ใช่รหัสผ่าน Google" Style="{StaticResource Description}"/><Button Content="นำเข้าไฟล์ client JSON…" Click="ImportClient_Click" HorizontalAlignment="Left" Margin="0,12,0,14"/><TextBlock Text="Client ID" Margin="0,0,0,6"/><TextBox x:Name="ClientIdBox" AutomationProperties.Name="Google OAuth Client ID"/><TextBlock Text="Client secret (หากมีในไฟล์ OAuth)" Margin="0,12,0,6"/><PasswordBox x:Name="ClientSecretBox" AutomationProperties.Name="OAuth client secret"/><Button Content="บันทึก OAuth client" Click="SaveClient_Click" HorizontalAlignment="Left" Margin="0,14,0,0"/></StackPanel></Expander>
+              </StackPanel>
+              <StackPanel x:Name="LocalPanel" Visibility="Collapsed"><TextBlock Text="เลือกโฟลเดอร์เฉพาะสำหรับคลังสำรองที่เข้ารหัส ระบบจะไม่ลบไฟล์อื่นนอกคลังของแอป" Style="{StaticResource Description}"/><TextBlock x:Name="LocalDestinationText" Text="ยังไม่ได้เลือกโฟลเดอร์" FontWeight="SemiBold" Margin="0,18,0,12"/><Button Content="เลือกโฟลเดอร์จัดเก็บ…" Click="ChooseDestination_Click" HorizontalAlignment="Left"/><TextBlock Text="หากใช้ไดรฟ์ภายนอก ให้เชื่อมต่อไว้ก่อนถึงเวลาสำรอง" Style="{StaticResource Description}" Margin="0,16,0,0"/></StackPanel>
+            </StackPanel></Border>
+          </StackPanel>
+          <StackPanel x:Name="HistoryPage" Visibility="Collapsed">
+            <Border Style="{StaticResource Card}"><StackPanel><TextBlock Text="กู้คืนไฟล์ได้ แม้เปลี่ยนเครื่อง" Style="{StaticResource SectionTitle}"/><TextBlock Text="นำเข้ากุญแจกู้คืน แล้วเปิดคลังสำรองเดิม เลือกชุดสำรอง และเลือกโฟลเดอร์ว่างสำหรับรับไฟล์ กุญแจที่นำเข้าใช้กู้คืนในครั้งนี้ โดยคงกุญแจสำรองเดิมไว้ หากยังไม่มีกุญแจในเครื่อง แอปจะบันทึกกุญแจที่นำเข้าไว้เป็นกุญแจเริ่มต้น" Style="{StaticResource Description}"/><WrapPanel Margin="0,16,0,0"><Button Content="นำเข้ากุญแจกู้คืน…" Click="ImportKey_Click" Margin="0,0,8,8"/><Button Content="เปิดคลังในไดรฟ์ / โฟลเดอร์…" Click="OpenLocalRepository_Click" Margin="0,0,8,8"/><Button Content="ค้นหาคลังใน Google Drive" Click="FindGoogleRepositories_Click" Margin="0,0,8,8"/></WrapPanel><ComboBox x:Name="GoogleRepositoriesBox" Visibility="Collapsed" DisplayMemberPath="Name" SelectionChanged="GoogleRepository_SelectionChanged" Padding="8" Margin="0,8,0,0" AutomationProperties.Name="คลังสำรอง Google Drive"/><TextBlock x:Name="RepositoryText" Text="แสดงคลังจากพื้นที่จัดเก็บที่ตั้งไว้" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,8,0,0"/></StackPanel></Border>
+            <Border Style="{StaticResource Card}"><StackPanel><DockPanel Margin="0,0,0,16"><Button Content="รีเฟรช" Click="RefreshSnapshots_Click" DockPanel.Dock="Right"/><TextBlock Text="ชุดสำรองที่กู้คืนได้" Style="{StaticResource SectionTitle}" VerticalAlignment="Center"/></DockPanel><TextBlock x:Name="EmptyHistory" Text="กดรีเฟรชเพื่ออ่านชุดสำรองจากคลังที่เลือก" Foreground="{StaticResource Muted}" Margin="0,6,0,18"/><ListView x:Name="SnapshotsList" BorderBrush="#E1E8E6" BorderThickness="1" Height="210" HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Auto" SelectionMode="Single"><ListView.View><GridView><GridViewColumn Header="วันที่สำรอง" DisplayMemberBinding="{Binding CreatedDisplay}" Width="185"/><GridViewColumn Header="เครื่อง" DisplayMemberBinding="{Binding DeviceName}" Width="180"/><GridViewColumn Header="ไฟล์" DisplayMemberBinding="{Binding FileCount}" Width="75"/><GridViewColumn Header="ขนาดข้อมูล" DisplayMemberBinding="{Binding SizeDisplay}" Width="115"/></GridView></ListView.View></ListView><Button x:Name="RestoreButton" Content="กู้คืนชุดที่เลือก…" Style="{StaticResource PrimaryButton}" Click="Restore_Click" HorizontalAlignment="Left" Margin="0,16,0,0"/><TextBlock Text="ระบบจะไม่เขียนทับไฟล์เดิมอย่างเงียบ ๆ และไม่กู้คืนผ่านลิงก์หรือ reparse point" Style="{StaticResource Description}" FontSize="12" Margin="0,12,0,0"/></StackPanel></Border>
+            <Border Style="{StaticResource Card}"><StackPanel><TextBlock Text="ย้ายไฟล์ได้ ส่วนแอปต้องติดตั้งใหม่" Style="{StaticResource SectionTitle}"/><TextBlock Text="การกู้คืนครอบคลุมไฟล์ที่สำรองไว้ ไม่ใช่การโคลน Windows หรือไดรเวอร์ แอปและสิทธิ์ใช้งานอาจต้องติดตั้งและลงชื่อเข้าใช้ใหม่ การย้ายข้อมูลแอปข้ามเวอร์ชันขึ้นกับผู้ผลิตแต่ละราย" Style="{StaticResource Description}"/><CheckBox x:Name="InventoryBox" Content="แนบรายชื่อแอปที่ติดตั้ง เพื่อช่วยติดตั้งใหม่ด้วยตนเอง" Margin="0,16,0,0" Checked="Inventory_Changed" Unchecked="Inventory_Changed"/><TextBlock Text="รายชื่อแอปเป็นข้อมูลประกอบ ไม่รวมตัวติดตั้ง รหัสผ่าน หรือการรับประกันการย้ายแอป" Style="{StaticResource Description}" FontSize="12" Margin="0,8,0,0"/></StackPanel></Border>
+          </StackPanel>
+          <StackPanel x:Name="SettingsPage" Visibility="Collapsed">
+            <Border Style="{StaticResource Card}"><StackPanel><TextBlock Text="สำรองตามเวลาของคุณ" Style="{StaticResource SectionTitle}"/><CheckBox x:Name="ScheduleEnabledBox" Content="เปิดสำรองอัตโนมัติทุกวัน" Margin="0,12,0,16"/><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><StackPanel Margin="0,0,20,0"><TextBlock Text="เวลาสำรอง (HH:mm)" Margin="0,0,0,6"/><TextBox x:Name="DailyTimeBox" Text="21:00" MaxLength="5" AutomationProperties.Name="เวลาสำรองประจำวัน"/><TextBlock Text="ใช้เวลาท้องถิ่นของ Windows" Style="{StaticResource Description}" FontSize="12" Margin="0,6,0,0"/></StackPanel><StackPanel Grid.Column="1"><TextBlock Text="เก็บประวัติ (จำนวนวัน)" Margin="0,0,0,6"/><TextBox x:Name="RetentionBox" Text="7" AutomationProperties.Name="จำนวนวันเก็บประวัติ"/><TextBlock Text="0 = เก็บเฉพาะชุดสำเร็จล่าสุด" Style="{StaticResource Description}" FontSize="12" Margin="0,6,0,0"/></StackPanel></Grid><TextBlock Text="จำกัดพื้นที่คลังสำรอง (GB, ไม่บังคับ)" Margin="0,18,0,6"/><TextBox x:Name="QuotaBox" AutomationProperties.Name="ขนาดคลังสูงสุด หน่วย GB"/><TextBlock Text="เว้นว่างเพื่อไม่กำหนดเพดาน หากพื้นที่ไม่พอจะล้างประวัติเก่าสุดก่อน จึงอาจย้อนหลังได้ไม่ครบวันที่ตั้งไว้ หากยังไม่พอจะพักงานและคงชุดสำเร็จล่าสุดไว้ การลดวันเก็บประวัติจะมีผลกับการล้างในรอบสำรองถัดไป" Style="{StaticResource Description}" FontSize="12" Margin="0,7,0,0"/><Button Content="บันทึกการตั้งค่า" Style="{StaticResource PrimaryButton}" Click="SaveSettings_Click" HorizontalAlignment="Left" Margin="0,20,0,0"/><TextBlock Text="Windows Task Scheduler จะเปิด Worker เฉพาะเวลาทำงาน เมื่อปิดหน้าต่างนี้จะไม่มี UI ค้างในระบบ เครื่องต้องเปิดอยู่และเข้าถึงต้นทางกับปลายทางได้" Style="{StaticResource Description}" FontSize="12" Margin="0,16,0,0"/></StackPanel></Border>
+            <Border Style="{StaticResource Card}"><StackPanel><TextBlock Text="เก็บกุญแจให้พร้อม ก่อนวันที่ต้องใช้" Style="{StaticResource SectionTitle}"/><TextBlock Text="กุญแจกู้คืนใช้ถอดรหัสคลังสำรอง เก็บสำเนาไว้นอกเครื่องนี้ เช่น USB ที่ปลอดภัย ผู้ที่มีกุญแจและคลังสามารถอ่านไฟล์ได้ หากกุญแจหาย แอปไม่สามารถกู้คืนแทนคุณได้" Style="{StaticResource Description}"/><TextBlock x:Name="KeyStateText" FontWeight="SemiBold" Margin="0,14,0,0"/><WrapPanel Margin="0,16,0,0"><Button Content="ส่งออกกุญแจกู้คืน…" Click="ExportKey_Click" Margin="0,0,10,8"/><Button Content="นำเข้ากุญแจจากเครื่องเดิม…" Click="ImportKey_Click" Margin="0,0,0,8"/></WrapPanel></StackPanel></Border>
+          </StackPanel>
+        </StackPanel>
+      </ScrollViewer>
+      <Border Grid.Row="2" Background="White" BorderBrush="#E1E8E6" BorderThickness="0,1,0,0" Padding="24,14">
+        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel Margin="0,0,14,0"><TextBlock x:Name="StatusText" Text="พร้อมตั้งค่าการสำรอง" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" ToolTip="{Binding Text, ElementName=StatusText}"/><ProgressBar x:Name="JobProgress" Height="3" Margin="0,9,0,0" IsIndeterminate="True" Foreground="{StaticResource Accent}" Visibility="Collapsed"/><TextBlock x:Name="ProgressDetailText" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,5,0,0" Visibility="Collapsed" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/></StackPanel><Button x:Name="CancelButton" Grid.Column="1" Content="ยกเลิกงาน" Click="Cancel_Click" Visibility="Collapsed" VerticalAlignment="Center"/></Grid>
+      </Border>
+    </Grid>
+  </Grid>
+</Window>

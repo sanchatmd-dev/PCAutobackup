@@ -1,0 +1,21 @@
+name: Windows build and tests
+on:
+  push:
+  pull_request:
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build and test
+        run: dotnet test PCAutobackup.sln -c Release --nologo
+      - name: Package portable Windows app
+        shell: pwsh
+        run: ./scripts/build.ps1 -SkipTests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PCAutobackup-win-x64
+          path: artifacts/PCAutobackup-win-x64/

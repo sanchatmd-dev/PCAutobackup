@@ -1,0 +1,25 @@
+# Agent working agreement
+
+## Team and model policy
+- This chat is Root: **Astra, high** (`gpt-6-astra`, high). Root owns architecture, integration, review, tests, release packaging and user communication.
+- Delegate only to **Astra medium/low**, **GPT-6.1 Terra low/medium/high**, or **GPT-6.1 Sol low/medium/high**. Do not use other models or effort levels.
+- Initial roles: Core/backup engineer = GPT-6.1 Terra high; Google integration engineer = GPT-6.1 Sol high; Windows UI engineer = GPT-6.1 Sol high.
+- Agents share this checkout. Assign disjoint file ownership. Coordinate interface changes with Root. Do not revert other agents' changes. Do not push or publish independently.
+
+## Product contract
+- Build a real Windows desktop backup application, not a web mockup. Google Drive is the default destination; external HDD/SSD and custom local folders are alternatives.
+- Prioritize low RAM: no permanently running UI/browser runtime. Use Windows Task Scheduler to launch a bounded, streaming backup worker once daily; no app process needs to remain resident between runs.
+- Default retention: 7 days. Users can set nonnegative whole days (0 = latest successful snapshot only), optional quota in GB, schedule and source folders.
+- Enforce retention and quota without deleting the last successful, restorable snapshot. Missing source drives, failed reads, cancellation and failed uploads must not be interpreted as deletions. Commit a snapshot only after all its objects are durable. Do not delete arbitrary destination files.
+- Store encrypted backup chunks and encrypted manifests. Recovery must work without the original PC using the recovery key. Protect locally stored keys and OAuth refresh tokens with Windows DPAPI. Never log secrets or ask users to give passwords to the app.
+- Google authorization uses system-browser OAuth with PKCE, loopback redirect, state validation and offline access. Confirm the actual returned Google identity and Drive permission; a typed email is only a login hint. Do not fake a working account when credentials are missing.
+- Restore must prevent path traversal, follow no reparse points, and avoid silently overwriting files. Reinstalling OS/drivers or guaranteeing arbitrary cross-version app migration is outside the supported file-restore boundary; document actual support candidly.
+- User-facing UI and primary docs are Thai, with English technical identifiers where useful.
+
+## Engineering
+- .NET 10, native WPF UI, separate console Worker and shared Core. Keep third-party dependencies minimal. No Electron.
+- Tests must cover the real failure modes: round-trip recovery, changed/deleted files, missing sources, corrupted/wrong-key data, retention/quota, cancellation, path safety, and OAuth validation where applicable.
+- Test only with synthetic fixtures in designated temporary directories. Never back up, upload, prune or restore the user's actual files during development.
+- `README.md`: setup, build, run, Google OAuth configuration, recovery, scheduling, limitations. `Contex.md` (intentional spelling): architecture, current state, decisions and next work. Keep both accurate.
+- Do not commit generated binaries, credentials, keys, user configuration, backup repositories, SDKs or logs. Supply a reproducible local release build and Windows CI.
+- Run build and appropriate automated tests before reporting completion. Measure actual memory; label measurements with workload and do not turn targets into guarantees.

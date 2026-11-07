@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>WinExe</OutputType></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../PCAutobackup.Core/PCAutobackup.Core.csproj" /></ItemGroup>
+</Project>

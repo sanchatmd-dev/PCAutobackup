@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+.tools/
+artifacts/
+TestResults/
+.vs/
+*.user
+*.log
+client_secret*.json
+appsettings.local.json
+*.pca-key
+*.pca-recovery
+*.pcakey
