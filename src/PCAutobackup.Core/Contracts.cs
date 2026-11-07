@@ -6,6 +6,7 @@ public sealed class AppConfiguration
 {
     public int Version { get; set; } = 1;
     public long Revision { get; set; }
+    public string Language { get; set; } = "th";
     public string DeviceId { get; set; } = Guid.NewGuid().ToString("N");
     public string DeviceName { get; set; } = Environment.MachineName;
     public DestinationKind Destination { get; set; } = DestinationKind.GoogleDrive;

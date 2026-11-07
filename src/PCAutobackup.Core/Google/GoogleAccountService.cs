@@ -40,7 +40,7 @@ public sealed class GoogleAccountService
             if (!string.IsNullOrWhiteSpace(emailHint)) parameters["login_hint"] = emailHint.Trim();
             var query = await new FormUrlEncodedContent(parameters).ReadAsStringAsync(timeout.Token);
             Process.Start(new ProcessStartInfo("https://accounts.google.com/o/oauth2/v2/auth?" + query) { UseShellExecute = true });
-            var code = await ReadCallbackAsync(listener, port, state, timeout.Token);
+            var code = await ReadCallbackAsync(listener, port, state, config.Language, timeout.Token);
             using var response = await Http.PostAsync("https://oauth2.googleapis.com/token", new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["client_id"] = config.GoogleClientId, ["client_secret"] = config.GoogleClientSecret,
@@ -116,7 +116,7 @@ public sealed class GoogleAccountService
 
     internal static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
-    private static async Task<string> ReadCallbackAsync(TcpListener listener, int port, string state, CancellationToken ct)
+    private static async Task<string> ReadCallbackAsync(TcpListener listener, int port, string state, string language, CancellationToken ct)
     {
         while (true)
         {
@@ -134,7 +134,7 @@ public sealed class GoogleAccountService
             var line = Encoding.ASCII.GetString(header.ToArray()).Split("\r\n", 2)[0].Split(' ');
             if (line.Length != 3 || line[0] != "GET" || !line[1].StartsWith("/oauth2callback?", StringComparison.Ordinal))
             {
-                await ReplyAsync(stream, false, ct);
+                await ReplyAsync(stream, false, language, ct);
                 continue;
             }
             var uri = new Uri($"http://127.0.0.1:{port}" + line[1]);
@@ -145,16 +145,16 @@ public sealed class GoogleAccountService
             var query = pairs.ToDictionary(x => Uri.UnescapeDataString(x[0]), x => x.Length == 2 ? Uri.UnescapeDataString(x[1].Replace('+', ' ')) : "");
             var valid = IsValidState(state, query.GetValueOrDefault("state"));
             var ok = valid && !query.ContainsKey("error") && !string.IsNullOrWhiteSpace(query.GetValueOrDefault("code"));
-            await ReplyAsync(stream, ok, ct);
+            await ReplyAsync(stream, ok, language, ct);
             if (!valid) throw new InvalidOperationException("OAuth state ไม่ตรงกัน การเชื่อมต่อถูกยกเลิก");
             if (!ok) throw new InvalidOperationException("การอนุญาต Google ถูกยกเลิกหรือไม่ได้รับรหัสยืนยัน");
             return query["code"];
         }
     }
 
-    private static async Task ReplyAsync(Stream stream, bool ok, CancellationToken ct)
+    private static async Task ReplyAsync(Stream stream, bool ok, string language, CancellationToken ct)
     {
-        var body = Encoding.UTF8.GetBytes(ok ? "เชื่อมต่อ Google สำเร็จ กลับไปที่ PC AutoBackup ได้แล้ว" : "เชื่อมต่อไม่สำเร็จ กลับไปที่ PC AutoBackup เพื่อลองอีกครั้ง");
+        var body = Encoding.UTF8.GetBytes(AppLocalization.Text(ok ? "เชื่อมต่อ Google สำเร็จ กลับไปที่ PC AutoBackup ได้แล้ว" : "เชื่อมต่อไม่สำเร็จ กลับไปที่ PC AutoBackup เพื่อลองอีกครั้ง", language));
         var head = Encoding.ASCII.GetBytes($"HTTP/1.1 {(ok ? "200 OK" : "400 Bad Request")}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {body.Length}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n");
         await stream.WriteAsync(head, ct);
         await stream.WriteAsync(body, ct);

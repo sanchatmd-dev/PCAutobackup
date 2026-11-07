@@ -5,7 +5,7 @@ Environment: Windows 11 Home Single Language x64 (10.0.26200), .NET SDK 10.0.403
 ## Automated checks
 
 - Solution build: 0 warnings, 0 errors.
-- xUnit suite: **75 passed, 0 failed, 0 skipped**.
+- xUnit suite: **83 passed, 0 failed, 0 skipped**.
 - Covers authenticated encrypted round-trip, multi-chunk files, UTF-8 names, empty directories, source reorder, changed/deleted files, positive/default retention and latest-only retention, quota refusal, missing source, cancellation, wrong key/device, corrupt chunk, path traversal, destination conflict, unknown objects and reuse without downloading committed chunks.
 - Service tests cover new-PC restore with exported key, DPAPI persistence, invalid key import, stale configuration revision, foreign recovery key isolation, missing scheduled configuration, preflight status, postcommit status failures and local lease contention.
 - Mocked Google transport tests cover OAuth state/scope validation, token refresh, paging, duplicate detection, object naming/scope, cancellation, resumable uploads, ambiguous response probes and upload-session URI validation. These do not replace live Google testing.
@@ -71,6 +71,14 @@ A different configuration/device ID imported the recovery key, selected the repo
 - Installed and updated through Windows PowerShell 5.1, the same host used by Install.cmd. The real configuration hash and unrelated HKCU Run values stayed unchanged. Desktop shortcut opened the installed app, which displayed 21:00, 7 days and the existing Drive account. The registered task remained Ready with its next run at 21:00 and now points to the stable installed Worker path.
 - After stopping Tray normally, launched the exact configured startup executable/arguments. One installed Tray stayed running, with **38.01 MiB working set / 9.96 MiB private memory** and **0.0 CPU seconds added over a two-second idle sample**. This tests the startup command, not a physical reboot or sign-out/sign-in cycle.
 - Local private evidence: `Documents/PCAutobackup-Verification/tray-lifecycle-20261107/` (process-test.json, close-during-backup-result.json, install-verification.json and screenshot). No keys/configuration contents are committed.
+
+## Single-file setup and English language — 2026-11-07
+
+- Added a self-contained Windows x64 installer with the complete application payload embedded in one executable. The initial installer was approximately 207 MB, including .NET; no external runtime or companion files are required. The existing per-user installer performs copying, cloud shortcuts, startup and task refresh; normal setup launches Desktop after success.
+- Ran the executable's silent/no-launch path against the existing installation: completed successfully, preserved the configuration hash and kept the Desktop shortcut. With an isolated settings window open, setup returned exit code 1, left the installed application hash unchanged and did not terminate the open app. The setup refuses active Desktop/Worker processes before replacing files.
+- Added eight localization tests: legacy/default Thai, null/unknown-language fallback, English persistence preserving every configuration field except language/revision, diagnostic translations preserving non-ASCII paths, format arguments and localized calendar display. All 83 tests pass.
+- Native UI on an isolated configuration: Thai default, immediate English switch in Settings, English title/navigation/help/status text, English persistence after closing/reopening, and switching back to Thai all passed. Existing 09:00/21:00 times, 7-day retention, 5 GB quota and disabled schedule remained unchanged. Screenshot evidence is in ignored `artifacts/localization-ui/english-settings.png`.
+- Language selection does not register or change a scheduled task. Tray reads the selected language when opening its menu rather than polling. External OS/provider diagnostics may retain their original language. Setup remains unsigned; signing and an uninstall UI are not included in this release.
 
 ## Not verified / current limits
 

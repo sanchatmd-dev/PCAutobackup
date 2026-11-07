@@ -14,6 +14,8 @@
 
 ## สถาปัตยกรรมที่เลือก
 
+รองรับภาษาไทย/English ผ่าน `AppConfiguration.Language` (`th` default; config เก่าหรือค่าไม่รู้จักกลับเป็นไทย) และ embedded `Localization/English.json` ใน Core. Desktop ใช้ dynamic resources กับ formatter สำหรับข้อความสถานะ/วันที่ เปลี่ยนภาษาบันทึกผ่าน SaveConfigurationAsync โดยไม่ลงทะเบียนตารางใหม่ Tray อ่านภาษาจาก config เมื่อเปิดเมนู ไม่มี polling เพิ่ม แปล diagnostics เฉพาะ template/prefix ของแอป ไม่แก้ filename/path หรือเนื้อหาสำรอง
+
 เลือก .NET 10 / WPF เพราะเป็น native Windows UI โดยไม่มี Chromium resident กระบวนการ Desktop แยกจาก Worker และ Tray ใช้ Core library ร่วมกัน Scheduler เปิด worker แล้ว worker ออกเมื่อสำรองเสร็จ ส่วน Tray ใช้ Win32 message loop ไม่มี polling ใช้ RAM ต่ำและไม่มี WPF อยู่ใน process นั้น ผู้ใช้ขอ tray/autostart เพิ่มภายหลัง จึงแทนที่เป้าหมายเดิมที่ไม่มี process ค้าง
 
 `AppInstance` ใช้ named mutex/event ต่อ config ให้เปิดหน้าตั้งค่าเดิมเมื่อเปิดซ้ำและยึด abandoned mutex ได้หลัง process ถูก kill การกด X/minimize เมื่อว่างทำให้ WPF ออก เมื่อมีงานอยู่จะซ่อนแล้วทำงานต่อจนเสร็จ เปิดซ้ำก่อนเสร็จเรียกหน้าต่างเดิมกลับมา `ApplicationService.GetLastRunAsync` เปลี่ยน Running เป็น Interrupted เฉพาะเมื่อยึด operation lock ได้จริง จึงไม่สับสนกับ Worker ที่ยังทำงานอยู่ `DesktopRuntime` ตรวจ due/interrupted/failed attempts ที่ใหม่กว่างานสำเร็จเมื่อเปิด UI/Tray แล้วเรียก Worker ถ้าเปิด schedule ไว้ ไม่ retry การยกเลิกโดยผู้ใช้ก่อนรอบถัดไป
@@ -59,7 +61,7 @@ Restore ไม่เขียนทับไฟล์เดิม ตรวจ r
 ## Validation และรายการก่อนส่งมอบ
 
 - Tests ใช้ synthetic temp directories เท่านั้น รวม round-trip, deletions, retention, quota, corruption, wrong key, path safety, failure/cancel, Google mocked transport, config และ recovery facade
-- Build Desktop/Worker/Tray Release ผ่าน และ automated tests 75 ข้อผ่าน รวม retention/quota, หลายเวลาต่อวัน, catch-up, interrupted job, live lock และ single-instance recovery
+- Build Desktop/Worker/Tray Release ผ่าน และ automated tests 83 ข้อผ่าน รวม retention/quota, หลายเวลาต่อวัน, catch-up, interrupted job, live lock และ single-instance recovery
 - Native UI ตรวจหน้าต่าง package จริง และแก้ปัญหาสีตัวอักษรปุ่มที่พบจาก screenshot แล้ว
 - Synthetic 128 MiB worker backup/restore ผ่านและ SHA-256 ตรงกัน; peak working set 75.5 MiB รอบแรก / 44.6 MiB รอบไม่เปลี่ยนข้อมูล ไม่มีการรับประกันเพดาน RAM จากชุดทดสอบนี้
 - ลงทะเบียนและสั่ง temporary Task Scheduler task สำรอง synthetic data สำเร็จ แล้วลบ task ทดสอบออก ไม่ได้เปิด schedule ของผู้ใช้จริง
@@ -85,6 +87,8 @@ Restore ไม่เขียนทับไฟล์เดิม ตรวจ r
 - ลงทะเบียน task ผู้ใช้ใหม่ด้วย trigger หลัง logon/unlock/resume โดยคง 21:00 เพียงเวลาเดียว retention 7 วันและโควตาเดิม ไม่ได้สั่งเครื่องผู้ใช้ Sleep/reboot เพื่อทดสอบฮาร์ดแวร์จริง
 
 ## งานต่อยอด
+
+ตัวติดตั้งไฟล์เดียวอยู่ใน `src/PCAutobackup.Installer` สร้างแยกหลัง publish app ผ่าน `scripts/build-installer.ps1` (ไม่อยู่ใน solution test เพราะต้องมี embedded payload ที่สร้างแล้ว) เป็น WPF bootstrapper self-contained/single-file สำหรับ Windows x64 แตก payload ลง temporary GUID directory แล้วเรียก installer เดิมแบบ hidden, สร้าง shortcuts/startup และเปิด Desktop เมื่อสำเร็จ รองรับ `--silent --no-launch` สำหรับ automation; payload ไม่มี personal config/credentials; installer ยัง unsigned ไม่ได้เป็น MSI และยังไม่มี uninstall UI
 
 อัปเดต 7 พฤศจิกายน 2026: cloud icon, Tray, per-user installer, Desktop shortcut และ startup ติดตั้งจริงแล้ว ตารางยังเป็น 21:00/retention 7 วันและ config hash เดิม ทดสอบ kill Worker ระหว่างไฟล์จำลอง 256 MiB แล้วเปิด Tray ให้ retry กู้คืน SHA-256 ตรง; ทดสอบ X ระหว่างงาน 4 GiB ให้ทำต่อและเปิดหน้าต่างเดิมกลับมา; kill ทั้ง Desktop/Tray แล้วเปิดใหม่ปกติ RAM ของ Tray ที่ติดตั้งจริงเมื่อพัก 38.01 MiB working set / 9.96 MiB private ไม่ได้ reboot เครื่องผู้ใช้จริง ผลละเอียดใน `docs/validation.md`
 

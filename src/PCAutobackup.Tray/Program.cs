@@ -9,6 +9,7 @@ internal static class Program
     private const uint CallbackMessage = 0x8001, OpenMessage = 0x8002;
     private static readonly WindowProcedure Procedure = WindowProc;
     private static string _configuration = "", _directory = "";
+    private static string _language = "th";
     private static nint _window, _icon;
     private static uint _taskbarCreated;
     private static NotifyIconData _notification;
@@ -56,10 +57,20 @@ internal static class Program
 
     private static void AddIcon()
     {
-        _notification = new NotifyIconData { Size = (uint)Marshal.SizeOf<NotifyIconData>(), Window = _window, Id = 1, Flags = 1 | 2 | 4 | 0x80, Callback = CallbackMessage, Icon = _icon, Tip = "PC AutoBackup · เปิดเพื่อปรับการตั้งค่า", Info = "", InfoTitle = "" };
+        RefreshLanguage();
+        _notification = new NotifyIconData { Size = (uint)Marshal.SizeOf<NotifyIconData>(), Window = _window, Id = 1, Flags = 1 | 2 | 4 | 0x80, Callback = CallbackMessage, Icon = _icon, Tip = T("PC AutoBackup · เปิดเพื่อปรับการตั้งค่า"), Info = "", InfoTitle = "" };
         ShellNotifyIcon(0, ref _notification);
         _notification.Version = 4;
         ShellNotifyIcon(4, ref _notification);
+    }
+
+    private static string T(string text) => AppLocalization.Text(text, _language);
+
+    private static void RefreshLanguage()
+    {
+        // Read on user interaction, not on a timer; language changes do not require restarting the resident tray.
+        try { _language = ConfigurationStore.LoadAsync(_configuration).GetAwaiter().GetResult().Language; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { }
     }
 
     private static nint WindowProc(nint window, uint message, nuint wParam, nint lParam)
@@ -87,15 +98,18 @@ internal static class Program
 
     private static void ShowMenu()
     {
+        RefreshLanguage();
+        _notification.Tip = T("PC AutoBackup · เปิดเพื่อปรับการตั้งค่า");
+        ShellNotifyIcon(1, ref _notification);
         var menu = CreatePopupMenu();
         try
         {
-            AppendMenu(menu, 0, 1, "เปิด PC AutoBackup");
-            AppendMenu(menu, 0, 2, "สำรองตอนนี้");
+            AppendMenu(menu, 0, 1, T("เปิด PC AutoBackup"));
+            AppendMenu(menu, 0, 2, T("สำรองตอนนี้"));
             var customConfig = !string.Equals(_configuration, DesktopRuntime.ConfigurationPath(null), StringComparison.OrdinalIgnoreCase);
-            AppendMenu(menu, (StartupEnabled() ? 8u : 0u) | (customConfig ? 1u : 0u), 3, "เริ่มพร้อม Windows");
+            AppendMenu(menu, (StartupEnabled() ? 8u : 0u) | (customConfig ? 1u : 0u), 3, T("เริ่มพร้อม Windows"));
             AppendMenu(menu, 0x800, 0, null);
-            AppendMenu(menu, 0, 4, "ออกจากถาดระบบ (ตารางสำรองยังทำงาน)");
+            AppendMenu(menu, 0, 4, T("ออกจากถาดระบบ (ตารางสำรองยังทำงาน)"));
             GetCursorPos(out var point);
             SetForegroundWindow(_window);
             var selected = TrackPopupMenu(menu, 0x100 | 2, point.X, point.Y, 0, _window, 0);

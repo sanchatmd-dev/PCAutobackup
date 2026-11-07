@@ -21,6 +21,7 @@ public static class ConfigurationStore
         var config = await JsonSerializer.DeserializeAsync<AppConfiguration>(stream, JsonOptions, ct)
             ?? throw new InvalidDataException("ไฟล์ตั้งค่าว่างหรือไม่ถูกต้อง");
         if (config.Version != 1) throw new InvalidDataException("เวอร์ชันไฟล์ตั้งค่านี้ยังไม่รองรับ");
+        config.Language = AppLocalization.NormalizeLanguage(config.Language);
         return config;
     }
 
@@ -32,6 +33,7 @@ public static class ConfigurationStore
 
     public static void Validate(AppConfiguration config)
     {
+        config.Language = AppLocalization.NormalizeLanguage(config.Language);
         if (config.RetentionDays < 0) throw new ArgumentException("จำนวนวันต้องไม่ติดลบ");
         if (config.QuotaBytes is <= 0) throw new ArgumentException("เพดานพื้นที่ต้องมากกว่า 0 หรือไม่กำหนด");
         if (!TimeOnly.TryParseExact(config.DailyTime, "HH:mm", out _)) throw new ArgumentException("เวลาต้องอยู่ในรูปแบบ HH:mm");

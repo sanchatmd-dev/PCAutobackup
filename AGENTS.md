@@ -17,7 +17,7 @@
 - Store encrypted backup chunks and encrypted manifests. Recovery must work without the original PC using the recovery key. Protect locally stored keys and OAuth refresh tokens with Windows DPAPI. Never log secrets or ask users to give passwords to the app.
 - Google authorization uses system-browser OAuth with PKCE, loopback redirect, state validation and offline access. Confirm the actual returned Google identity and Drive permission; a typed email is only a login hint. Do not fake a working account when credentials are missing.
 - Restore must prevent path traversal, follow no reparse points, and avoid silently overwriting files. Reinstalling OS/drivers or guaranteeing arbitrary cross-version app migration is outside the supported file-restore boundary; document actual support candidly.
-- User-facing UI and primary docs are Thai, with English technical identifiers where useful.
+- Default user-facing language and primary docs are Thai. Provide a persisted English option for Desktop, app diagnostics and Tray. Language changes must not change schedules, sources, destinations, credentials or retention. Never translate file paths or backup contents.
 
 ## Engineering
 - .NET 10, native WPF UI, separate headless Worker, small Win32 notification-area Tray and shared Core. Keep third-party dependencies minimal. No Electron. User-level installer creates Desktop/Start Menu shortcuts and HKCU logon startup; retain existing schedule/configuration on updates.

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>../../assets/app.ico</ApplicationIcon>
+    <AssemblyName>PCAutobackup-Setup</AssemblyName>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../../artifacts/installer-payload.zip" LogicalName="PCAutobackup.Payload.zip" />
+    <Resource Include="../../assets/app.ico" Link="app.ico" />
+  </ItemGroup>
+</Project>

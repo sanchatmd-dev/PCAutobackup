@@ -19,3 +19,10 @@ jobs:
         with:
           name: PCAutobackup-win-x64
           path: artifacts/PCAutobackup-win-x64/
+      - name: Build single executable installer
+        shell: pwsh
+        run: ./scripts/build-installer.ps1 -SkipBuild
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PCAutobackup-installer-win-x64
+          path: artifacts/PCAutobackup-win-x64.exe
