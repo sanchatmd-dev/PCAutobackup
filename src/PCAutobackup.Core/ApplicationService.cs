@@ -189,9 +189,9 @@ public sealed class ApplicationService
                 {
                     if (!Configuration.ScheduleEnabled) return null;
                     var last = await GetLastSuccessAsync();
-                    var planned = BackupSchedule.MostRecentDue(Configuration, timeProvider.GetUtcNow(), timeProvider.LocalTimeZone);
-                    // A job started before a round does not cover that round merely by ending later.
-                    if (last?.StartedUtc >= planned) return null;
+                    // Holding the config lock proves a previous Running attempt is no longer active.
+                    var attempt = await ReadStatusAsync(StatusPath);
+                    if (!BackupSchedule.ShouldRun(Configuration, timeProvider.GetUtcNow(), timeProvider.LocalTimeZone, last, attempt)) return null;
                 }
                 if (Configuration.Sources.Count == 0) throw new InvalidOperationException("กรุณาเลือกโฟลเดอร์ต้นทางก่อนสำรอง");
                 if (!Configuration.RecoveryKeyAcknowledged) throw new InvalidOperationException("กรุณาส่งออกและเก็บกุญแจกู้คืนไว้นอกเครื่องก่อนเริ่มสำรอง");
@@ -318,7 +318,25 @@ public sealed class ApplicationService
             throw;
         }
     }
-    public Task<RunStatus?> GetLastRunAsync() => ReadStatusAsync(StatusPath);
+    public async Task<RunStatus?> GetLastRunAsync()
+    {
+        var status = await ReadStatusAsync(StatusPath);
+        if (status?.Status != "Running") return status;
+        try
+        {
+            using var lease = OperationLock.Acquire(ConfigurationPath);
+            status = await ReadStatusAsync(StatusPath);
+            if (status?.Status == "Running")
+            {
+                status.Status = "Interrupted";
+                status.Message = "งานก่อนหน้าหยุดกลางคัน เปิดสำรองอัตโนมัติไว้เพื่อเริ่มใหม่ ชุดสำเร็จก่อนหน้ายังอยู่";
+                status.CompletedUtc = timeProvider.GetUtcNow();
+                await ConfigurationStore.WriteJsonAtomicAsync(StatusPath, status);
+            }
+        }
+        catch (IOException) { /* A live job owns the lock, or status is temporarily unavailable. */ }
+        return status;
+    }
     public Task<RunStatus?> GetLastSuccessAsync() => ReadStatusAsync(SuccessPath);
     private static async Task<RunStatus?> ReadStatusAsync(string path)
     {

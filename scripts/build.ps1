@@ -19,6 +19,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Desktop publish failed.' }
     & $dotnetCommand publish 'src/PCAutobackup.Worker/PCAutobackup.Worker.csproj' -c Release -r $Runtime --self-contained true -o (Join-Path $OutputDirectory 'Worker') -p:PublishSingleFile=false
     if ($LASTEXITCODE -ne 0) { throw 'Worker publish failed.' }
+    & $dotnetCommand publish 'src/PCAutobackup.Tray/PCAutobackup.Tray.csproj' -c Release -r $Runtime --self-contained true -o (Join-Path $OutputDirectory 'Tray') -p:PublishSingleFile=false
+    if ($LASTEXITCODE -ne 0) { throw 'Tray publish failed.' }
+    New-Item -ItemType Directory -Path (Join-Path $OutputDirectory 'Assets') -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'assets\app.ico') -Destination (Join-Path $OutputDirectory 'Assets\app.ico') -Force
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Install.cmd'), (Join-Path $PSScriptRoot 'install.ps1') -Destination $OutputDirectory -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination $OutputDirectory
     Copy-Item -LiteralPath (Join-Path $repoRoot 'Contex.md') -Destination $OutputDirectory
     Copy-Item -LiteralPath (Join-Path $repoRoot 'docs') -Destination $OutputDirectory -Recurse -Force

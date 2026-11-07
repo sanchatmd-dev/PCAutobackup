@@ -6,6 +6,15 @@ public static class BackupSchedule
 {
     public const int MaximumDailyTimes = 24;
 
+    public static bool ShouldRun(AppConfiguration config, DateTimeOffset now, TimeZoneInfo zone, RunStatus? lastSuccess, RunStatus? lastAttempt)
+    {
+        if (!config.ScheduleEnabled) return false;
+        var pending = lastAttempt?.Status is "Running" or "Interrupted" or "Failed"
+            && (lastSuccess is null || lastAttempt.StartedUtc > lastSuccess.StartedUtc);
+        // A job started before a round does not cover that round merely by ending later.
+        return pending || lastSuccess is null || lastSuccess.StartedUtc < MostRecentDue(config, now, zone);
+    }
+
     public static IReadOnlyList<string> GetTimes(AppConfiguration config) =>
         ValidateTimes(config.DailyTimes ?? [config.DailyTime]);
 

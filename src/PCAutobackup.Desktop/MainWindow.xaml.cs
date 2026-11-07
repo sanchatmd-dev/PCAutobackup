@@ -18,7 +18,7 @@ public partial class MainWindow : Window
     private bool _acceptProgress;
     private bool _loaded;
     private bool _populating;
-    private bool _closeAfterCancellation;
+    private bool _closeAfterJob;
 
     public MainWindow(string? configurationPath = null)
     {
@@ -35,7 +35,7 @@ public partial class MainWindow : Window
             _loaded = true;
             PopulateConfiguration();
             await RefreshRunHistoryAsync();
-            StatusText.Text = "พร้อมใช้งาน · ไม่มีงานสำรองเริ่มโดยอัตโนมัติจากหน้าต่างนี้";
+            StatusText.Text = "พร้อมใช้งาน · ปิดหรือย่อหน้าต่างเพื่อทำงานต่อในถาดระบบ";
         });
     }
 
@@ -55,6 +55,7 @@ public partial class MainWindow : Window
             "Succeeded" => "สำเร็จ",
             "Failed" => "ไม่สำเร็จ",
             "Cancelled" => "ยกเลิก",
+            "Interrupted" => "งานถูกขัดจังหวะ · จะลองใหม่เมื่อเปิดสำรองอัตโนมัติ",
             "Running" => "เริ่มทำงานแล้ว (สถานะที่บันทึกล่าสุด)",
             _ => latest.Status
         };
@@ -467,7 +468,7 @@ public partial class MainWindow : Window
                 message += "\n\nอ่านการตั้งค่าที่บันทึกไว้ไม่ได้ กรุณาตรวจสอบแล้วกดรีเฟรชการตั้งค่า";
             }
             StatusText.Text = "ทำงานไม่สำเร็จ · " + ex.Message;
-            MessageBox.Show(this, message, "ทำงานไม่สำเร็จ", MessageBoxButton.OK, MessageBoxImage.Warning);
+            if (IsVisible) MessageBox.Show(this, message, "ทำงานไม่สำเร็จ", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally
         {
@@ -481,7 +482,7 @@ public partial class MainWindow : Window
             JobProgress.Visibility = Visibility.Collapsed;
             ProgressDetailText.Visibility = Visibility.Collapsed;
             CancelButton.Visibility = Visibility.Collapsed;
-            if (_closeAfterCancellation) Close();
+            if (_closeAfterJob) Close();
         }
     }
 
@@ -497,14 +498,26 @@ public partial class MainWindow : Window
     {
         if (_jobCancellation is null) return;
         e.Cancel = true;
-        if (MessageBox.Show(this, "มีงานกำลังทำอยู่ ต้องการยกเลิกงานและปิดแอปหรือไม่?", "ปิดแอป", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) return;
-        _closeAfterCancellation = true;
-        Cancel_Click(this, new RoutedEventArgs());
+        _closeAfterJob = true;
+        Hide();
+    }
+
+    private void Window_StateChanged(object? sender, EventArgs e)
+    {
+        if (WindowState == WindowState.Minimized) Close();
+    }
+
+    public void ShowSettings()
+    {
+        _closeAfterJob = false;
+        WindowState = WindowState.Normal;
+        Show();
+        Activate();
     }
 
     private void ShowWarnings(IReadOnlyList<string> warnings)
     {
-        if (warnings.Count == 0) return;
+        if (warnings.Count == 0 || !IsVisible) return;
         MessageBox.Show(this, string.Join(Environment.NewLine, warnings.Take(12)) + (warnings.Count > 12 ? $"\n… และอีก {warnings.Count - 12:N0} รายการ" : ""), "ข้อสังเกตจากงานล่าสุด", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 

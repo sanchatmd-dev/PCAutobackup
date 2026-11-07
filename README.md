@@ -6,7 +6,8 @@
 
 ## ความสามารถ
 
-- สำรองผ่าน Windows Task Scheduler วันละ 1–24 รอบตามเวลาที่เลือก ค่าเริ่มต้นวันละครั้ง 21:00; ปิดหน้าต่างได้ worker จะเปิดเฉพาะเวลาทำงานแล้วออก ไม่ต้องมีโปรเซส resident ระหว่างรอบ
+- สำรองผ่าน Windows Task Scheduler วันละ 1–24 รอบตามเวลาที่เลือก ค่าเริ่มต้นวันละครั้ง 21:00; Worker เปิดเฉพาะเวลาทำงานแล้วออก เหลือไอคอนเมฆในถาดระบบซึ่งใช้ RAM ต่ำ
+- ติดตั้งทางลัด Desktop/Start Menu และเริ่มถาดระบบเมื่อเข้าสู่ Windows กดปิดหรือย่อหน้าต่างแล้วงานที่กำลังทำจะดำเนินต่อจนเสร็จ
 - Google Drive เป็นค่าเริ่มต้น ล็อกอินผ่านเบราว์เซอร์ของระบบด้วย OAuth PKCE และยืนยันอีเมลจริงจาก Google แอปไม่รับรหัสผ่าน Google
 - อ่านไฟล์ทีละ chunk 4 MiB เข้ารหัส AES-256-GCM และใช้ keyed content IDs เพื่อไม่เก็บ chunk เดิมซ้ำใน repository เดียวกัน
 - ค่าเริ่มต้นเก็บประวัติ **7 วัน**; เปลี่ยนจำนวนวันได้; `0` หมายถึงเก็บเฉพาะชุดล่าสุดที่สำเร็จ
@@ -19,15 +20,15 @@
 
 ## เริ่มใช้งาน
 
-1. สร้างหรือดาวน์โหลดชุด Windows จาก workflow แล้วแตกไว้ในโฟลเดอร์ถาวร เช่น `%LOCALAPPDATA%\Programs\PCAutobackup` อย่าย้ายหลังเปิดตารางเวลาโดยไม่ตั้งเวลาใหม่
-2. เปิด `PCAutobackup.exe` ชุดที่สร้างด้วย `scripts/build.ps1` รวม .NET runtime มาแล้ว ไม่ต้องติดตั้ง .NET เพิ่มบนเครื่องใช้งาน
+1. สร้างหรือดาวน์โหลดชุด Windows จาก workflow แตก ZIP แล้วเปิด `Install.cmd` ไม่ต้องใช้สิทธิ์ผู้ดูแล ตัวติดตั้งคัดลอกไป `%LOCALAPPDATA%\Programs\PCAutobackup` สร้างทางลัด Desktop/Start Menu และเริ่มถาดระบบเมื่อเข้าสู่ Windows หากอัปเดตให้ปิดหน้าตั้งค่าและรอให้งานสำรองเสร็จก่อน ตัวติดตั้งรักษาการตั้งค่า/กุญแจเดิมและปรับพาธ Worker ของ task ที่เปิดไว้
+2. เปิดไอคอน **PC AutoBackup** รูปเมฆบน Desktop เพื่อปรับค่า หรือคลิกไอคอนเมฆในถาดระบบ (อาจอยู่ในเมนูลูกศรซ่อนไอคอน) ชุดแอปรวม .NET runtime มาแล้ว ไม่ต้องติดตั้ง .NET เพิ่ม
 3. ใน **โฟลเดอร์ต้นทาง** เพิ่มเฉพาะโฟลเดอร์ที่ต้องการ เช่น Documents, Desktop, Pictures และโฟลเดอร์งาน
 4. ใน **พื้นที่จัดเก็บ** เลือก Google Drive และเชื่อมบัญชี หรือเลือกโฟลเดอร์เฉพาะบน External HDD/SSD/ดิสก์อื่น
 5. ใน **การตั้งค่า** ส่งออกกุญแจกู้คืนไปยังที่ปลอดภัยนอกคอมเครื่องนี้ เช่น USB อีกตัว ห้ามเก็บสำเนาเพียงชุดเดียวไว้ใน PC ที่กำลังสำรอง
 6. ตั้งจำนวนวัน/เพดานพื้นที่ และลอง **สำรองตอนนี้** หนึ่งครั้ง ตรวจรายการประวัติและทดลองกู้คืนไฟล์ก่อนพึ่งพางานอัตโนมัติ
 7. เปิดตัวเลือกสำรองอัตโนมัติ กรอก **เวลาสำรองแต่ละวัน** เช่น `21:00` หรือ `09:00, 13:00, 21:00` แล้วบันทึก จากนั้นปิดหน้าต่างได้ ใส่เวลาแบบ 24 ชั่วโมง ไม่ซ้ำกัน สูงสุด 24 รอบต่อวัน
 
-ไม่มีการเปิดงานสำรองจริง สร้าง scheduled task หรืออัปโหลดข้อมูลโดยอัตโนมัติแค่เปิดแอป
+การติดตั้งใหม่ยังไม่เปิดสำรองจนกว่าจะตั้งต้นทาง ปลายทาง กุญแจ และเปิด schedule เอง สำหรับเครื่องที่เปิดสำรองอัตโนมัติไว้แล้ว การเปิดแอป/ถาดระบบจะตรวจรอบที่พลาดและงานสำรองที่ถูกขัดจังหวะ แล้วเรียก Worker ตามความจำเป็น
 
 ## ตั้งค่า Google Drive ครั้งแรก
 
@@ -63,7 +64,11 @@ Google OAuth project ที่อยู่ในสถานะ External/Testing
 
 ## RAM และการทำงานเบื้องหลัง
 
-การใช้ RAM ระหว่างรอบเป็น **0 สำหรับโปรเซสแอป** เมื่อปิด Desktop และ worker ทำงานเสร็จแล้ว (ไม่รวม Windows Task Scheduler ซึ่งเป็นบริการของระบบ) ไม่จำเป็นต้องซ่อนไว้ใน system tray
+เมื่อปิดหรือย่อหน้าต่างที่ไม่มีงานค้าง WPF จะออก เหลือ `PCAutobackup.Tray.exe` ซึ่งใช้ Win32 message loop ไม่มี polling และไม่มี WPF/Chromium ในถาดระบบ ผลวัด Windows 11 x64 ขณะพักประมาณ **35–38 MiB working set / 8–10 MiB private memory** ไม่ใช่เพดานรับประกัน หากปิดหน้าต่างระหว่างสำรองหรือกู้คืน หน้าต่างจะซ่อนและทำงานจนเสร็จแล้วออก เปิดจาก Desktop/ถาดระบบระหว่างนั้นจะเรียกหน้าต่างเดิมกลับมา
+
+คลิกขวาไอคอนถาดระบบเพื่อเปิดหน้าตั้งค่า สำรองตอนนี้ เปิด/ปิด **เริ่มพร้อม Windows** หรือออกจากถาดระบบ การออกจากถาดระบบไม่ปิดตารางสำรอง หากต้องการหยุดสำรองอัตโนมัติให้ปิดในหน้าการตั้งค่าด้วย Startup เป็นของผู้ใช้ Windows ปัจจุบันและเริ่มหลังเข้าสู่ระบบ ไม่ทำงานก่อนล็อกอิน ดู [Windows Run registry keys](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys)
+
+หากถูกบังคับปิดจาก Task Manager แอปไม่เปิดตัวเองซ้ำทันที เมื่อเปิดแอปอีกครั้งหรือเข้าสู่ Windows ครั้งถัดไป จะกลับมาทำงานได้โดยไม่ติด lock เก่า งานสำรองที่หยุดกลางคันจะเริ่มใหม่เมื่อเปิด schedule ไว้ ใช้ chunks ที่สำเร็จแล้วซ้ำ และรักษาชุดสำเร็จก่อนหน้า ไม่ใช่การ resume ตรง byte ของไฟล์ ส่วนงานกู้คืนที่ถูกบังคับปิดต้องเริ่มใหม่ไปยังโฟลเดอร์ว่าง
 
 ระหว่างสำรองอ่านเนื้อหาเป็น chunk และอัปโหลดทีละส่วน แต่ข้อมูลรายการไฟล์และชุด chunk references ยังใช้ RAM ตามจำนวนไฟล์/ประวัติ จึงไม่รับประกันเพดาน 50 MB ระหว่างทำงาน ไม่โหลดเนื้อหาไฟล์ขนาดใหญ่ทั้งไฟล์เข้าหน่วยความจำ ประวัติแต่ละ manifest ถูกอ่านทีละชุด ขนาด encrypted manifest จำกัด 256 MiB
 
@@ -101,7 +106,7 @@ dotnet test tests/PCAutobackup.Tests/PCAutobackup.Tests.csproj -c Release
 .\scripts\build.ps1
 ```
 
-ผลลัพธ์อยู่ใน `artifacts/PCAutobackup-win-x64/` พร้อม `Worker/` และ runtime ไม่ต้องเปิด terminal เพื่อใช้งานปกติ รองรับ build ARM64 ด้วย `-Runtime win-arm64` แต่ต้องทดสอบบนเครื่อง ARM64 ก่อนใช้งานจริง
+ผลลัพธ์อยู่ใน `artifacts/PCAutobackup-win-x64/` พร้อม `Worker/`, `Tray/`, `Assets/`, `Install.cmd` และ runtime ไม่ต้องเปิด terminal เพื่อใช้งานปกติ รองรับ build ARM64 ด้วย `-Runtime win-arm64` แต่ต้องทดสอบบนเครื่อง ARM64 ก่อนใช้งานจริง
 
 รันจาก source:
 
@@ -129,8 +134,11 @@ GitHub Actions รัน tests บน Windows และแนบชุด portab
 src/PCAutobackup.Core       Backup engine, stores, OAuth, config, scheduler
 src/PCAutobackup.Desktop    Native WPF UI
 src/PCAutobackup.Worker     Run once, record result, exit
+src/PCAutobackup.Tray       Native notification icon, logon startup, launch recovery
+assets/                    Cloud icon PNG and multi-resolution ICO
 tests/PCAutobackup.Tests    Synthetic integration + mocked Google tests
 scripts/build.ps1          Self-contained portable Windows build
+scripts/install.ps1        Per-user install, shortcuts, startup and task path refresh
 AGENTS.md                  บทบาท/รุ่นโมเดลและกฎการทำงานทีม
 Contex.md                  บริบทสถาปัตยกรรมและสถานะโครงการ
 ```

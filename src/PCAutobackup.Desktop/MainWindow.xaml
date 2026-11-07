@@ -3,14 +3,14 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="PCAutobackup — สำรองไว้อุ่นใจ" Width="1160" Height="830" MinWidth="950" MinHeight="680"
         WindowStartupLocation="CenterScreen" Background="#F5F7F6" Foreground="{StaticResource Ink}" FontFamily="Leelawadee UI, Segoe UI" FontSize="14"
-        Loaded="Window_Loaded" Closing="Window_Closing">
+        Loaded="Window_Loaded" Closing="Window_Closing" StateChanged="Window_StateChanged" Icon="Assets/app.ico">
   <Grid>
     <Grid.ColumnDefinitions><ColumnDefinition Width="228"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
     <Border Background="#173E3C" Padding="20,30">
       <DockPanel LastChildFill="True">
         <StackPanel DockPanel.Dock="Top">
           <Border Width="44" Height="44" Background="#2E625C" CornerRadius="12" HorizontalAlignment="Left" Margin="0,0,0,15">
-            <TextBlock Text="&#xE753;" FontFamily="Segoe MDL2 Assets" FontSize="23" Foreground="#D3EEE2" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+            <Image Source="Assets/app-icon.png" Width="44" Height="44"/>
           </Border>
           <TextBlock Text="PC AutoBackup" Foreground="White" FontSize="21" FontWeight="SemiBold"/>
           <TextBlock Text="สำรองไว้อุ่นใจ" Foreground="#A9C9C1" Margin="0,5,0,30"/>
@@ -23,8 +23,8 @@
         <StackPanel DockPanel.Dock="Bottom" Margin="0,30,0,0">
           <Border BorderBrush="#3B605B" BorderThickness="0,1,0,0" Padding="0,18,0,0">
             <StackPanel>
-              <TextBlock Text="ทำงานเฉพาะเมื่อจำเป็น" Foreground="#DAE9E3" FontWeight="SemiBold"/>
-              <TextBlock Text="ปิดหน้าต่างได้ตามปกติ&#x0a;Windows จะเริ่มงานตามเวลาที่ตั้งไว้" Foreground="#A9C9C1" FontSize="12" LineHeight="20" Margin="0,7,0,0"/>
+              <TextBlock Text="ทำงานต่อในถาดระบบ" Foreground="#DAE9E3" FontWeight="SemiBold"/>
+              <TextBlock Text="ปิดหรือย่อหน้าต่างได้&#x0a;เปิดใหม่จากไอคอนเมฆหรือ Desktop" Foreground="#A9C9C1" FontSize="12" LineHeight="20" Margin="0,7,0,0"/>
             </StackPanel>
           </Border>
           <TextBlock Text="เข้ารหัสก่อนจัดเก็บ • v1.0" Foreground="#7FA69E" FontSize="11" Margin="0,18,0,0"/>

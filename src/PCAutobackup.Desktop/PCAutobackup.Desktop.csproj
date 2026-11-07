@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <ApplicationIcon>../../assets/app.ico</ApplicationIcon>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
@@ -9,6 +10,8 @@
     <RootNamespace>PCAutobackup.Desktop</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Resource Include="../../assets/app.ico" Link="Assets/app.ico" />
+    <Resource Include="../../assets/app-icon.png" Link="Assets/app-icon.png" />
     <ProjectReference Include="../PCAutobackup.Core/PCAutobackup.Core.csproj" />
   </ItemGroup>
 </Project>

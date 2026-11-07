@@ -1,10 +1,12 @@
 using System.IO;
 using System.Windows;
+using PCAutobackup.Core;
 
 namespace PCAutobackup.Desktop;
 
 public partial class App : Application
 {
+    private AppInstance? _instance;
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -19,7 +21,24 @@ public partial class App : Application
             }
             configurationPath = e.Args[1];
         }
+        configurationPath = DesktopRuntime.ConfigurationPath(configurationPath);
+        _instance = new AppInstance("desktop", configurationPath);
+        if (!_instance.IsPrimary)
+        {
+            _instance.ActivatePrimary();
+            Shutdown();
+            return;
+        }
+        DesktopRuntime.EnsureTray(AppContext.BaseDirectory, configurationPath);
+        _instance.Listen(() => Dispatcher.BeginInvoke(() => (MainWindow as MainWindow)?.ShowSettings()));
         MainWindow = new MainWindow(configurationPath);
         MainWindow.Show();
+        _ = DesktopRuntime.StartPendingBackupAsync(AppContext.BaseDirectory, configurationPath);
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        _instance?.Dispose();
+        base.OnExit(e);
     }
 }

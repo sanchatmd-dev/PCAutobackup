@@ -11,7 +11,7 @@
 
 ## Product contract
 - Build a real Windows desktop backup application, not a web mockup. Google Drive is the default destination; external HDD/SSD and custom local folders are alternatives.
-- Prioritize low RAM: no permanently running UI/browser runtime. Use Windows Task Scheduler to launch a bounded, streaming backup worker at 1–24 user-selected daily times, defaulting to 21:00 once daily. Check missed rounds after logon, unlock and resume; no app process needs to remain resident between runs.
+- Prioritize low RAM: a small event-driven native tray stays resident; idle WPF settings exit when closed/minimized. This follows the user's later explicit tray/autostart requirement and supersedes the original zero-resident-process design. Use Windows Task Scheduler to launch a bounded, streaming backup worker at 1–24 user-selected daily times, defaulting to 21:00 once daily. Check missed/interrupted rounds after launch, logon, unlock and resume. Never add a watchdog that resists an explicit process termination.
 - Default retention: 7 days. Users can set nonnegative whole days (0 = latest successful snapshot only), optional quota in GB, schedule and source folders.
 - Enforce retention and quota without deleting the last successful, restorable snapshot. Missing source drives, failed reads, cancellation and failed uploads must not be interpreted as deletions. Commit a snapshot only after all its objects are durable. Do not delete arbitrary destination files.
 - Store encrypted backup chunks and encrypted manifests. Recovery must work without the original PC using the recovery key. Protect locally stored keys and OAuth refresh tokens with Windows DPAPI. Never log secrets or ask users to give passwords to the app.
@@ -20,7 +20,7 @@
 - User-facing UI and primary docs are Thai, with English technical identifiers where useful.
 
 ## Engineering
-- .NET 10, native WPF UI, separate console Worker and shared Core. Keep third-party dependencies minimal. No Electron.
+- .NET 10, native WPF UI, separate headless Worker, small Win32 notification-area Tray and shared Core. Keep third-party dependencies minimal. No Electron. User-level installer creates Desktop/Start Menu shortcuts and HKCU logon startup; retain existing schedule/configuration on updates.
 - Tests must cover the real failure modes: round-trip recovery, changed/deleted files, missing sources, corrupted/wrong-key data, retention/quota, cancellation, path safety, and OAuth validation where applicable.
 - Test only with synthetic fixtures in designated temporary directories. Never back up, upload, prune or restore the user's actual files during development.
 - `README.md`: setup, build, run, Google OAuth configuration, recovery, scheduling, limitations. `Contex.md` (intentional spelling): architecture, current state, decisions and next work. Keep both accurate.

@@ -5,7 +5,7 @@ Environment: Windows 11 Home Single Language x64 (10.0.26200), .NET SDK 10.0.403
 ## Automated checks
 
 - Solution build: 0 warnings, 0 errors.
-- xUnit suite: **67 passed, 0 failed, 0 skipped**.
+- xUnit suite: **75 passed, 0 failed, 0 skipped**.
 - Covers authenticated encrypted round-trip, multi-chunk files, UTF-8 names, empty directories, source reorder, changed/deleted files, positive/default retention and latest-only retention, quota refusal, missing source, cancellation, wrong key/device, corrupt chunk, path traversal, destination conflict, unknown objects and reuse without downloading committed chunks.
 - Service tests cover new-PC restore with exported key, DPAPI persistence, invalid key import, stale configuration revision, foreign recovery key isolation, missing scheduled configuration, preflight status, postcommit status failures and local lease contention.
 - Mocked Google transport tests cover OAuth state/scope validation, token refresh, paging, duplicate detection, object naming/scope, cancellation, resumable uploads, ambiguous response probes and upload-session URI validation. These do not replace live Google testing.
@@ -59,6 +59,18 @@ A different configuration/device ID imported the recovery key, selected the repo
 - A third isolated run invoked through Task Scheduler caught up an intentionally overdue round; a repeated invocation skipped it without creating another snapshot. All three synthetic snapshots restored both folders with matching SHA-256. The temporary task was removed. Task XML uses invariant Gregorian dates even under Thai Windows culture.
 - The user's task was re-registered from the new scheduler XML, preserving **21:00 once daily**, current account, sources, retention and quota. It now checks overdue rounds one minute after logon, unlock or the Windows resume event, with StartWhenAvailable enabled and WakeToRun disabled. The production window's accessibility was unavailable, so registration was completed through the scheduler XML/API and independently inspected in Windows.
 - Local evidence is under ignored `artifacts/validation/`: TRX results, native UI screenshot, task XML, automatic worker statuses and synthetic repository. No credentials, private source names or recovery keys are committed.
+
+## Cloud icon, installation, tray and forced termination — 2026-11-07
+
+- Generated a teal cloud/upload icon and packaged a multi-resolution ICO (16 through 256 pixels) for the executable, window, tray and shortcuts. The WPF sidebar uses the original PNG to avoid upscaling the smallest ICO frame.
+- Added a separate Win32 notification-area process with no WPF/WinForms/Chromium, no polling loop and no watchdog. Measured synthetic idle working set **39,632,896 bytes (37.8 MiB)** and private memory **9,768,960 bytes (9.3 MiB)** after recovering a job. A later idle observation after closing settings measured **34.8 MiB / 8.2 MiB**. These are observations, not caps; active backup/settings use additional memory.
+- Killed the packaged Worker after it started writing a new chunk from a 256 MiB synthetic random file. The previous successful status remained byte-identical and its snapshot restored before retry. Starting Tray recovered the interrupted job before the next scheduled time; the restored two-file snapshot contained **268,435,507 bytes**, and the binary SHA-256 matched exactly. No real user files/cloud data were modified in this test.
+- Launched duplicate Tray and verified it exited while the original stayed active. Killed Tray and relaunched successfully. Unit tests also exercise abandoned mutex ownership, activation signals and detection of Running status only after a live job releases its lock.
+- Native Windows UI: minimize exited idle WPF while Tray remained. With a synthetic 4 GiB zero file being backed up, X hid the window while the process and Running status remained active. Relaunch opened the same window; backup completed with three files / **4,563,402,803 bytes**, uploading only about 4.27 MB because zero chunks deduplicated. Forced termination of Desktop and Tray together was followed by successful reopening, normal history display and normal close.
+- Per-user installation creates Desktop/Start Menu cloud shortcuts and an HKCU Run entry, then refreshes the existing task's Worker path. Installation checks active UI/Worker processes before replacing binaries and does not terminate an active backup.
+- Installed and updated through Windows PowerShell 5.1, the same host used by Install.cmd. The real configuration hash and unrelated HKCU Run values stayed unchanged. Desktop shortcut opened the installed app, which displayed 21:00, 7 days and the existing Drive account. The registered task remained Ready with its next run at 21:00 and now points to the stable installed Worker path.
+- After stopping Tray normally, launched the exact configured startup executable/arguments. One installed Tray stayed running, with **38.01 MiB working set / 9.96 MiB private memory** and **0.0 CPU seconds added over a two-second idle sample**. This tests the startup command, not a physical reboot or sign-out/sign-in cycle.
+- Local private evidence: `Documents/PCAutobackup-Verification/tray-lifecycle-20261107/` (process-test.json, close-during-backup-result.json, install-verification.json and screenshot). No keys/configuration contents are committed.
 
 ## Not verified / current limits
 

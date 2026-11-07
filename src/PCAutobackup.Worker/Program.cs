@@ -3,7 +3,7 @@ using PCAutobackup.Core;
 var arguments = args.ToList();
 if (arguments.Contains("--help"))
 {
-    Console.WriteLine("PCAutobackup.Worker [--config <path>] [--scheduled]\nRuns one backup, records status and exits. Configure sources, destination and recovery key using Desktop first.");
+    Console.WriteLine("PCAutobackup.Worker [--config <path>] [--scheduled | --refresh-schedule]\nRuns one backup, records status and exits. --refresh-schedule only updates an enabled Windows task to this installed Worker. Configure sources, destination and recovery key using Desktop first.");
     return 0;
 }
 string? configurationPath = null;
@@ -18,6 +18,12 @@ Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
 try
 {
     var application = new ApplicationService(configurationPath);
+    if (arguments.Contains("--refresh-schedule"))
+    {
+        var config = await application.LoadConfigurationAsync();
+        if (config.ScheduleEnabled) await WindowsScheduler.RegisterAsync(config, DesktopRuntime.ConfigurationPath(configurationPath), cancellation.Token);
+        return 0;
+    }
     var result = arguments.Contains("--scheduled")
         ? await application.BackupScheduledAsync(cancellation.Token)
         : await application.BackupAsync(ct: cancellation.Token);
