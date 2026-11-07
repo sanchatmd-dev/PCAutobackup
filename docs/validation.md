@@ -29,9 +29,20 @@ A different configuration/device ID imported the recovery key, selected the repo
 - Native settings edited to 14 days / 50 GB and saved successfully to an isolated QA configuration; actual JSON matched and schedule remained disabled. Production defaults were not modified. Long help text wrapping was corrected after screenshot review.
 - A uniquely named temporary scheduled task was registered, manually triggered, and completed a synthetic backup through the packaged worker. The test task was removed afterward. No production schedule was enabled.
 
+## Live Google Drive trial — 2026-11-07
+
+- Created a dedicated Google Cloud project, enabled Drive API, configured an External/Testing consent screen and Desktop OAuth client. The owner completed browser account selection and consent. The app verified the returned identity and a real Drive request, and persisted tokens using DPAPI.
+- Selected only a generated test directory; application inventory was disabled and no personal files were uploaded. Inputs: a 5,242,880-byte random binary, 44-byte text, 90-byte UTF-8 Thai text in a Thai-named subdirectory, and a zero-byte file. Total: **4 files / 5,243,014 bytes**.
+- Native UI backup succeeded in **23.65 s**. Listing snapshots and restoring from Google Drive to a separate empty directory succeeded. All four restored file lengths and SHA-256 hashes matched the baseline; the restored file count matched exactly.
+- A separate packaged Worker run with unchanged inputs succeeded in **9.23 s**, peak working set **70,959,104 bytes (67.7 MiB)**, and exited. The earlier UI backup's process peak was 211,746,816 bytes (201.9 MiB), including the already-open WPF UI and OAuth setup; this is not a Worker measurement.
+- The live restore exposed a display race: a queued progress callback could replace the completion message while run-history refresh awaited I/O. The desktop now stops accepting progress before terminal messages and ignores callbacks from previous jobs.
+- Rebuilt the package, imported the exported recovery-key file, and repeated the real Drive restore into another empty directory. All four lengths and SHA-256 hashes matched again, with exactly four files. The UI retained its final “กู้คืนสำเร็จ · 4 ไฟล์ · 5.24 MB” message after the job finished.
+- The production configuration currently selects the synthetic source only, keeps 7 days, and has scheduling disabled. OAuth remains in Testing; long-running authorization beyond its token lifetime is not proven by this trial. The exported recovery key is outside the selected source but still on this PC; an off-machine copy is required before relying on it for disaster recovery.
+- Local private evidence (not committed): `%USERPROFILE%\Documents\PCAutobackup-Google-Test\expected-hashes.json`, `restore-verification.json`, `restore-after-fix-verification.json`, and `worker-run.json`. Credentials and recovery-key contents are excluded from evidence reports.
+
 ## Not verified / current limits
 
-- Real Google sign-in, real-account upload/download, long-duration token refresh and provider interruptions were **not tested**; no user OAuth client/account was supplied. Configure the Desktop OAuth client and perform a small backup-and-restore trial before relying on Google storage.
+- Long-duration Google token refresh, provider interruptions, and restore on a physically different Windows computer remain **not tested**. The live same-PC cloud round-trip above does not establish these outcomes.
 - No physical external-disk disconnect/reconnect or changed-drive-letter hardware test, no ARM64 runtime test, no Windows-version matrix.
 - Scheduler tested registration/manual trigger, not an overnight power-off/resume scenario. Interactive user logon is required.
 - Active manifest and chunk reference metadata still scale with dataset/history size. No full scrub/VSS/application-aware snapshots, app reinstallation, credential migration, or full OS restore.

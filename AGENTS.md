@@ -1,5 +1,8 @@
 # Agent working agreement
 
+## Communication
+- Use the `caveman` skill throughout this project, as requested by the user. Keep Thai replies concise while preserving technical facts, constraints, and necessary confirmation details. Skill source on this machine: `C:/Users/USER/.codex/skills/caveman/SKILL.md`. This preference does not compress persisted code or documentation.
+
 ## Team and model policy
 - This chat is Root: **Astra, high** (`gpt-6-astra`, high). Root owns architecture, integration, review, tests, release packaging and user communication.
 - Delegate only to **Astra medium/low**, **GPT-6.1 Terra low/medium/high**, or **GPT-6.1 Sol low/medium/high**. Do not use other models or effort levels.

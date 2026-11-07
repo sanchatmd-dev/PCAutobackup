@@ -55,7 +55,11 @@ Restore ไม่เขียนทับไฟล์เดิม ตรวจ r
 - Native UI ตรวจหน้าต่าง package จริง และแก้ปัญหาสีตัวอักษรปุ่มที่พบจาก screenshot แล้ว
 - Synthetic 128 MiB worker backup/restore ผ่านและ SHA-256 ตรงกัน; peak working set 75.5 MiB รอบแรก / 44.6 MiB รอบไม่เปลี่ยนข้อมูล ไม่มีการรับประกันเพดาน RAM จากชุดทดสอบนี้
 - ลงทะเบียนและสั่ง temporary Task Scheduler task สำรอง synthetic data สำเร็จ แล้วลบ task ทดสอบออก ไม่ได้เปิด schedule ของผู้ใช้จริง
-- Live Google OAuth/Drive ยังไม่ทดสอบจนกว่าจะมี credentials และบัญชีที่ผู้ใช้เลือกเอง
+- Live Google OAuth/Drive ทดสอบแล้วด้วย Desktop client และบัญชีที่ผู้ใช้เลือกและอนุญาตด้วยตนเอง: สำรองและกู้คืน 4 ไฟล์จำลอง รวม 5,243,014 bytes แล้วเทียบขนาดและ SHA-256 ตรงทุกไฟล์
+- Packaged Worker สำรองไฟล์จำลองเดิมไป Google Drive ใช้ 9.23 วินาที peak working set 67.7 MiB และจบ process; config จริงยังเลือกเฉพาะโฟลเดอร์จำลอง, retention 7 วัน, schedule ปิด, application inventory ปิด
+- แก้ progress callback ที่มาช้าทับข้อความกู้คืนสำเร็จ โดยหยุดรับ progress ก่อนข้อความผลลัพธ์และตรวจว่า callback เป็นของงานปัจจุบัน
+- ทดสอบ package หลังแก้ด้วยการนำเข้าไฟล์กุญแจที่ส่งออก แล้วกู้คืนจาก Drive อีกครั้งไปโฟลเดอร์ว่าง: จำนวนไฟล์ ขนาด และ SHA-256 ตรงทั้งหมด พร้อมยืนยันว่าข้อความกู้คืนสำเร็จไม่ถูก progress ทับ
+- OAuth ยังอยู่ใน Testing ต้องพิจารณาอายุ refresh token 7 วันก่อนใช้ระยะยาว ส่วนกุญแจที่ส่งออกในการทดสอบยังอยู่บน PC ต้องเก็บสำเนานอกเครื่องก่อนใช้จริง ดู `docs/google-setup.md`
 - Build package self-contained ใน `artifacts/` (ignored); task path ต้องคงที่หลังลงทะเบียน
 - ดูผลล่าสุดและข้อจำกัดการทดสอบเพิ่มเติมใน `docs/validation.md` เมื่อสร้างแล้ว
 

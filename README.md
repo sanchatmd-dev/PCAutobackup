@@ -37,6 +37,8 @@
 4. ที่หน้าพื้นที่จัดเก็บของ PC AutoBackup กดนำเข้า OAuth client JSON (หรือระบุ Client ID/Client secret ของ Desktop client)
 5. กด **เชื่อมต่อ Google** เลือกบัญชี/เข้าสู่ระบบบนหน้า Google และอนุญาตสิทธิ์ Drive จากนั้นแอปจะแสดงอีเมลที่ Google ยืนยันจริง อีเมลที่พิมพ์ในแอปเป็นเพียงตัวช่วยเลือกบัญชี
 
+ดูขั้นตอนหน้าจอปัจจุบัน การทดสอบไฟล์จำลอง และการแก้ปัญหาที่ [คู่มือ Google Desktop OAuth](docs/google-setup.md)
+
 สิทธิ์ที่ใช้: `openid`, `email`, `https://www.googleapis.com/auth/drive.file` สำหรับไฟล์ที่แอปสร้าง/ได้รับอนุญาต โฟลเดอร์ที่แอปสร้างคือ `PC AutoBackup` และแยก repository ตามเครื่อง ไม่แก้ไฟล์ทั่วไปนอกคลังของแอป
 
 **เมื่อต้องกู้คืนบนคอมใหม่ ใช้ Google account เดิมและ OAuth application/project เดิม** จึงจะค้นพบ repository เดิมภายใต้ `drive.file` ได้ รุ่นนี้ยังไม่มี Google Picker เพื่อรับสิทธิ์ข้าม OAuth application จึงควรเก็บ client JSON ไว้ด้วย (แยกจากกุญแจกู้คืนตามสมควร)

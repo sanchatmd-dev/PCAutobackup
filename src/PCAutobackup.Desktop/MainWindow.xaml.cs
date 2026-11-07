@@ -15,6 +15,7 @@ public partial class MainWindow : Window
 {
     private readonly ApplicationService _service;
     private CancellationTokenSource? _jobCancellation;
+    private bool _acceptProgress;
     private bool _loaded;
     private bool _populating;
     private bool _closeAfterCancellation;
@@ -322,6 +323,7 @@ public partial class MainWindow : Window
         await RunJobAsync("กำลังเตรียมสำรองข้อมูล…", async ct =>
         {
             var result = await _service.BackupAsync(CreateProgress(), ct);
+            _acceptProgress = false;
             LastBackupText.Text = $"สำรองสำเร็จล่าสุด {DateTime.Now:dd/MM/yyyy HH:mm} · {result.FileCount:N0} ไฟล์ · {FormatBytes(result.TotalBytes)}";
             StatusText.Text = $"สำรองสำเร็จ · {result.FileCount:N0} ไฟล์ · ส่งข้อมูล {FormatBytes(result.UploadedBytes)}";
             ShowWarnings(result.Warnings);
@@ -394,18 +396,24 @@ public partial class MainWindow : Window
         {
             if (Directory.EnumerateFileSystemEntries(dialog.FolderName).Any()) throw new InvalidOperationException("กรุณาเลือกโฟลเดอร์ว่าง เพื่อแยกไฟล์ที่กู้คืนจากไฟล์เดิมอย่างชัดเจน");
             var result = await _service.RestoreAsync(row.Id, dialog.FolderName, CreateProgress(), ct);
+            _acceptProgress = false;
             StatusText.Text = $"กู้คืนสำเร็จ · {result.FilesRestored:N0} ไฟล์ · {FormatBytes(result.BytesRestored)}";
             ShowWarnings(result.Warnings);
         });
     }
 
-    private IProgress<BackupProgress> CreateProgress() => new ThrottledProgress(progress => Dispatcher.BeginInvoke(() =>
+    private IProgress<BackupProgress> CreateProgress()
     {
-        if (_jobCancellation is null) return;
-        StatusText.Text = TranslateStage(progress.Stage);
-        ProgressDetailText.Text = $"{progress.FilesProcessed:N0} ไฟล์ · {FormatBytes(progress.BytesProcessed)}" + (string.IsNullOrEmpty(progress.CurrentFile) ? "" : " · " + progress.CurrentFile);
-        ProgressDetailText.ToolTip = ProgressDetailText.Text;
-    }));
+        var job = _jobCancellation;
+        return new ThrottledProgress(progress => Dispatcher.BeginInvoke(() =>
+        {
+            // Queued progress must not replace a terminal result or update a later job.
+            if (!_acceptProgress || job is null || !ReferenceEquals(_jobCancellation, job)) return;
+            StatusText.Text = TranslateStage(progress.Stage);
+            ProgressDetailText.Text = $"{progress.FilesProcessed:N0} ไฟล์ · {FormatBytes(progress.BytesProcessed)}" + (string.IsNullOrEmpty(progress.CurrentFile) ? "" : " · " + progress.CurrentFile);
+            ProgressDetailText.ToolTip = ProgressDetailText.Text;
+        }));
+    }
 
     private static string TranslateStage(string stage) => stage.ToLowerInvariant() switch
     {
@@ -421,6 +429,7 @@ public partial class MainWindow : Window
     {
         if (_jobCancellation is not null) return;
         _jobCancellation = new CancellationTokenSource();
+        _acceptProgress = true;
         ReloadConfigurationButton.IsEnabled = false;
         MainContent.IsEnabled = false;
         JobProgress.Visibility = Visibility.Visible;
@@ -435,10 +444,12 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
+            _acceptProgress = false;
             StatusText.Text = "ยกเลิกงานแล้ว · ชุดสำรองที่สำเร็จก่อนหน้ายังคงอยู่";
         }
         catch (Exception ex)
         {
+            _acceptProgress = false;
             var message = ex.Message;
             try
             {
@@ -458,6 +469,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            _acceptProgress = false;
             try { if (_loaded) await RefreshRunHistoryAsync(); }
             catch { LatestRunText.Text = "อ่านสถานะงานล่าสุดไม่ได้ · กดรีเฟรชการตั้งค่าเพื่อลองอีกครั้ง"; }
             _jobCancellation.Dispose();
@@ -473,6 +485,7 @@ public partial class MainWindow : Window
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
+        _acceptProgress = false;
         _jobCancellation?.Cancel();
         CancelButton.IsEnabled = false;
         StatusText.Text = "กำลังยกเลิกอย่างปลอดภัย…";
