@@ -154,3 +154,5 @@ Progress featureติดตั้งในเครื่องแล้ว Cor
 เตรียม Release v2026.11.08-progress: ตัวติดตั้งไฟล์เดียวแสดงเปอร์เซ็นต์ ความเร็วประมวลผล MB/s และ ETA ภาษาไทย/อังกฤษ คงproduction16/16และตาราง21:00 พร้อมแนบคู่มือHTMLและSHA256SUMS.txt
 
 ทดสอบReleaseprogressEXEติดตั้งทับexit0และactualWPF localrandom2GiB3files สำรอง/กู้คืนสำเร็จ SHA3/3 generation/source/restoredตรง UIระหว่างงานเห็น%/MBs/ETAและจบ100%ETA0 ค่าปัดเศษสอดคล้อง RAMactualDesktop sampledpeakWS260.14/566.29MB, processpeak626.27ตอนrestore(ใช้processเดียวกัน) config/startup/SchedulerXMLเดิม16/16เวลา21:00 ดูdocs/progress-installer-verification-2026-11-08.md ไม่ได้commit/pushในงานนี้
+
+ตรวจactualWPF GoogleDriveprogress512MiB3filesผ่าน SHA3/3 เห็น77%13.74MB/sETA10และจบ100%ETA0 คืนจากDriveสำเร็จด้วย เปิดUIหลังพักRAMลดแต่privateไม่กลับbaseline(ก่อน71.57MB หลังbackup77s248.32/restore85s157.30) ปิดUIprocessออกเหลือmainTrayprivate8.63MBเท่าก่อน WS1.38MB ไม่บังคับGC/trim คงconfig/taskXML16/16เวลา21:00 ดูdocs/drive-progress-idle-verification-2026-11-08.md
