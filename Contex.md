@@ -152,3 +152,5 @@ Release v2026.11.08-parallel16: เตรียมเผยแพร่ source �
 Progress featureติดตั้งในเครื่องแล้ว Core91ECA1B972ECFD4CA13FAAFD37928C6890CFF3D7BBC1B4C58FBA0DD9BF727E3A Release178testsผ่าน buildไม่มีwarning/error SHA synthetic2/2 มีin-file31updatesต่อphase config/SchedulerXMLเดิม คง16/16และ21:00 ไม่มีcommit/pushหรืออัปเดตGitHubRelease
 
 เตรียม Release v2026.11.08-progress: ตัวติดตั้งไฟล์เดียวแสดงเปอร์เซ็นต์ ความเร็วประมวลผล MB/s และ ETA ภาษาไทย/อังกฤษ คงproduction16/16และตาราง21:00 พร้อมแนบคู่มือHTMLและSHA256SUMS.txt
+
+ทดสอบReleaseprogressEXEติดตั้งทับexit0และactualWPF localrandom2GiB3files สำรอง/กู้คืนสำเร็จ SHA3/3 generation/source/restoredตรง UIระหว่างงานเห็น%/MBs/ETAและจบ100%ETA0 ค่าปัดเศษสอดคล้อง RAMactualDesktop sampledpeakWS260.14/566.29MB, processpeak626.27ตอนrestore(ใช้processเดียวกัน) config/startup/SchedulerXMLเดิม16/16เวลา21:00 ดูdocs/progress-installer-verification-2026-11-08.md ไม่ได้commit/pushในงานนี้
