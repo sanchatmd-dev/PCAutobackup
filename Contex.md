@@ -1,5 +1,7 @@
 # Project context — PC AutoBackup
 
+ตรวจ CI หลัง Release persistent-undo ผ่าน2/2 แล้ว ดาวน์โหลด EXE จาก Release มาติดตั้งทับ exit0 SHA256 EXE856CFD528A7174BC4DF6B300DDDEAAEEFED727FA0CD827CEE276A9A7A6D26FFE เทียบpayload816/816ตรง InstalledCore70A9C27081EE21082C149C30097E6A445E10297FD59E6044FEA6827D57C42C5B config/startup/taskXMLเดิมทุกค่า คง16/16และdaily21:00 เริ่มTrayจริงแล้ว ดู [รายงานติดตั้ง Release](docs/release-persistent-undo-install-verification-2026-11-09.md) เผยแพร่รายงานและเพิ่มผล816/816กับCI2/2ในรายละเอียดReleaseเดิม โดยไม่เปลี่ยนassetหรือตาราง
+
 เตรียมเผยแพร่ `v2026.11.09-persistent-undo` รวมแก้ปุ่มนำออกไทย/อังกฤษ, ประวัติ Undo ถาวร, ยืนยันนำออก, คืนโฟลเดอร์ทั้งหมด, ล้างประวัติพร้อมคำยืนยัน และแถบซ่อนหลัง60วินาที ตัวติดตั้งไฟล์เดียวชื่อ PCAutobackup-win-x64.exe พร้อมคู่มือ HTML และ SHA256SUMS.txt คง16/16และเวลา21:00 หลักฐานทดสอบหน้าต่างจริงอยู่ในรายงาน persistent-source-ui-verification-2026-11-09.md บันทึกก่อนหน้านี้ที่ระบุว่ายังไม่เผยแพร่เป็นสถานะ ณ เวลาตรวจครั้งนั้น
 
 ติดตั้ง persistent Undo รุ่นล่าสุดในเครื่องและทดสอบหน้าจอจริงครบแล้ว (9 พฤศจิกายน 2026): Undo, Confirm, Restore folders, Clear No/Yes, ซ่อนแถบหลังรอจริงเกิน60s และประวัติอยู่หลังเปิดใหม่ผ่าน เทียบ installed payload815/815 และไฟล์จำลอง SHA2/2 ตรง configurationจริง/startupเดิม ตารางdaily21:00เดิม แต่installerrefresh StartBoundaryเป็นวันที่9ตามวันติดตั้ง คง16/16 Core5477718DEF48011932DC2915770FF5ADE1303A95713E073BD08BD0991B4181F3 ดู [รายงาน](docs/persistent-source-ui-verification-2026-11-09.md) ยังไม่commit/pushหรือReleaseใหม่ ข้อความสถานะก่อนติดตั้งด้านล่างเป็นประวัติ

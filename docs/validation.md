@@ -1,5 +1,9 @@
 # Validation — 2026-11-07
 
+## Released persistent-Undo installer — 9 November 2026
+
+[Release installation and SHA-256 report](release-persistent-undo-install-verification-2026-11-09.md): both GitHub Windows CI runs succeeded. Downloaded Release EXE SHA-256 matches GitHub asset digest and local build; installer exit0. Installed files match all816 expected payload entries, mismatches0. Main configuration hash, startup Run key and scheduler XML unchanged; production16/16 and enabled daily21:00 retained. Started installed Tray. No additional transfer or RAM measurement. Release assets remain unchanged when publishing this report.
+
 ## Installed persistent source controls — 9 November 2026
 
 [Actual installed WPF verification](persistent-source-ui-verification-2026-11-09.md): installed payload SHA-256 815/815 matched. Synthetic UI Undo, Confirm removal, Restore folders and Clear history No/Yes passed. Real wait exceeded 60 seconds; banner hid while pending history remained. Closed and reopened installed executable with the same isolated configuration; history survived and restore returned only the unconfirmed source. Original synthetic file SHA/size unchanged 2/2. Main configuration/startup unchanged, daily21:00 enabled and 16/16 retained. Task XML changed only daily StartBoundary date after installer refreshed it on a new day. No new transfer or memory comparison; full suite196 had passed before installation. No commit/push or Release update.
