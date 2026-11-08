@@ -142,3 +142,5 @@ Restore experiment: เพิ่ม maxConcurrentRestoreChunks=1 เป็น pa
 Release v2026.11.08-parallel16: เตรียมเผยแพร่ source และตัวติดตั้งไฟล์เดียว PCAutobackup-win-x64.exe พร้อม SHA256SUMS.txt และคู่มือ HTML รุ่น 16/16 ตารางเริ่มต้น 21:00 และตารางผู้ใช้เดิมคงเดิม ตัวเลือก 32 ยังใช้เฉพาะการทดลอง
 
 ตรวจตัวติดตั้ง Release 16/16 ทับในเครื่อง: เปิดแอปหลังติดตั้งได้ config/startup/scheduler XML เดิมครบ คง21:00 ทดสอบ installed Core กับข้อมูลจำลอง Google Drive268468264bytes สำรอง34.282s กู้คืน17.583s SHA4/4 peakWS346.68/236.98MB errors0 ดู docs/installer-sixteen-verification-2026-11-08.md เป็น reinstallรุ่น16/16เดิม และใช้Coreharnessไม่ใช่Workerprocessโดยตรง
+
+ตรวจรอบจริง21:00วันที่8พ.ย.2026สำเร็จ21:10:25 Taskresult0 installedCoreproduction16/16 snapshot46files22.26GB ใช้3405chunksเดิมและเพิ่ม1937chunks8.10GBciphertext peakWorkerWS530.89MB(sample526.65MB) private556.59MB ค่าตั้งเดิมยกเว้นOAuthrefresh/Revision รอบถัดไป9พ.ย.21:00 ดูdocs/scheduled21-verification-2026-11-08.md ไม่ได้traceHTTPconcurrencyหรือrestoreไฟล์ผู้ใช้
