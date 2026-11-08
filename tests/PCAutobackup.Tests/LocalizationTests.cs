@@ -112,5 +112,38 @@ public sealed class LocalizationTests : IDisposable
         }
     }
 
+    [Fact]
+    public void TransferMetricsTranslateAndUseProcessedDecimalMegabytes()
+    {
+        var elapsed = TimeSpan.FromSeconds(2);
+        Assert.Equal("25% · Processed 1.00 MB/s · ETA 00:00:06",
+            AppLocalization.FormatTransferMetrics(2_000_000, 8_000_000, elapsed, "en"));
+        Assert.Equal("25% · ประมวลผล 1.00 MB/s · เหลือประมาณ 00:00:06",
+            AppLocalization.FormatTransferMetrics(2_000_000, 8_000_000, elapsed, null));
+    }
+
+    [Fact]
+    public void UnknownTotalsAndZeroElapsedNeverInventPercentSpeedOrEta()
+    {
+        Assert.Null(AppLocalization.ProgressPercentage(20, null));
+        Assert.Equal("--% · Processed -- MB/s · ETA --",
+            AppLocalization.FormatTransferMetrics(0, null, TimeSpan.Zero, "en"));
+        Assert.Equal("25% · Processed -- MB/s · ETA --",
+            AppLocalization.FormatTransferMetrics(2_000_000, 8_000_000, TimeSpan.Zero, "en"));
+    }
+
+    [Fact]
+    public void TransferPercentStaysBelowCompleteWhenTotalChangesAndHandlesEmptyJobs()
+    {
+        Assert.Equal(99d, AppLocalization.ProgressPercentage(8_000_000, 8_000_000));
+        Assert.Equal(99d, AppLocalization.ProgressPercentage(8_000_000, 4_000_000));
+        Assert.Equal(0d, AppLocalization.ProgressPercentage(0, 0));
+        Assert.Equal(100d, AppLocalization.ProgressPercentage(0, 0, completed: true));
+        Assert.Equal("99% · Processed 1.00 MB/s · ETA --",
+            AppLocalization.FormatTransferMetrics(8_000_000, 8_000_000, TimeSpan.FromSeconds(8), "en"));
+        Assert.Equal("100% · Processed 1.00 MB/s · ETA 00:00:00",
+            AppLocalization.FormatTransferMetrics(8_000_000, 8_000_000, TimeSpan.FromSeconds(8), "en", completed: true));
+    }
+
     public void Dispose() => Directory.Delete(root, true);
 }

@@ -21,6 +21,37 @@ public static class AppLocalization
     public static string Format(string source, string? language, params object?[] arguments) =>
         string.Format(CultureFor(language), Text(source, language), arguments);
 
+    public static double? ProgressPercentage(long processedBytes, long? totalBytes, bool completed = false)
+    {
+        if (completed) return 100;
+        if (totalBytes is null or < 0) return null;
+        if (totalBytes == 0) return 0;
+        return Math.Clamp(Math.Max(0, processedBytes) / (double)totalBytes.Value * 100, 0, 99);
+    }
+
+    /// <summary>Average logical bytes processed per second, including scan time; this is not network throughput.</summary>
+    public static string FormatTransferMetrics(long processedBytes, long? totalBytes, TimeSpan elapsed, string? language, bool completed = false)
+    {
+        var culture = CultureFor(language);
+        var percent = ProgressPercentage(processedBytes, totalBytes, completed);
+        var speed = elapsed.TotalSeconds > 0 && processedBytes > 0 ? processedBytes / elapsed.TotalSeconds : 0;
+        var percentageText = percent?.ToString("0", culture) + "%";
+        if (percent is null) percentageText = "--%";
+        var speedText = speed > 0 ? (speed / 1_000_000).ToString("0.00", culture) : "--";
+        var eta = "--";
+        if (completed) eta = "00:00:00";
+        else if (totalBytes is >= 0 && totalBytes > processedBytes && speed > 0)
+        {
+            var seconds = Math.Min(Math.Ceiling((totalBytes.Value - (double)Math.Max(0, processedBytes)) / speed), TimeSpan.MaxValue.TotalSeconds - 1);
+            var remaining = TimeSpan.FromSeconds(seconds);
+            eta = remaining.ToString(remaining.TotalDays >= 1 ? @"d\.hh\:mm\:ss" : @"hh\:mm\:ss", culture);
+        }
+        var template = NormalizeLanguage(language) == "en"
+            ? "{0} · Processed {1} MB/s · ETA {2}"
+            : "{0} · ประมวลผล {1} MB/s · เหลือประมาณ {2}";
+        return string.Format(culture, template, percentageText, speedText, eta);
+    }
+
     /// <summary>Translates application diagnostics while preserving appended filenames, server details and unknown system messages.</summary>
     public static string TranslateMessage(string message, string? language)
     {

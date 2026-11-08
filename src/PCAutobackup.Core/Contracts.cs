@@ -50,7 +50,7 @@ public interface IBackupStore : IAsyncDisposable
     IAsyncEnumerable<StoredObject> ListAsync(string prefix, CancellationToken ct = default);
 }
 
-public sealed record BackupProgress(string Stage, string? CurrentFile = null, long FilesProcessed = 0, long BytesProcessed = 0);
+public sealed record BackupProgress(string Stage, string? CurrentFile = null, long FilesProcessed = 0, long BytesProcessed = 0, long? TotalBytes = null);
 public sealed record BackupResult(string SnapshotId, long FileCount, long TotalBytes, long UploadedBytes, IReadOnlyList<string> Warnings);
 public sealed record SnapshotInfo(string Id, DateTimeOffset CreatedUtc, string DeviceName, long FileCount, long TotalBytes);
 public sealed record RestoreResult(long FilesRestored, long BytesRestored, IReadOnlyList<string> Warnings);

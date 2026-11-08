@@ -93,7 +93,16 @@
         </StackPanel>
       </ScrollViewer>
       <Border Grid.Row="2" Background="White" BorderBrush="#E1E8E6" BorderThickness="0,1,0,0" Padding="24,14">
-        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel Margin="0,0,14,0"><TextBlock x:Name="StatusText" Text="{local:Localize 'พร้อมตั้งค่าการสำรอง'}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" ToolTip="{Binding Text, ElementName=StatusText}"/><ProgressBar x:Name="JobProgress" Height="3" Margin="0,9,0,0" IsIndeterminate="True" Foreground="{StaticResource Accent}" Visibility="Collapsed"/><TextBlock x:Name="ProgressDetailText" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,5,0,0" Visibility="Collapsed" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/></StackPanel><Button x:Name="CancelButton" Grid.Column="1" Content="{local:Localize 'ยกเลิกงาน'}" Click="Cancel_Click" Visibility="Collapsed" VerticalAlignment="Center"/></Grid>
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <StackPanel Margin="0,0,14,0">
+            <TextBlock x:Name="StatusText" Text="{local:Localize 'พร้อมตั้งค่าการสำรอง'}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" ToolTip="{Binding Text, ElementName=StatusText}"/>
+            <TextBlock x:Name="ProgressMetricsText" Foreground="{StaticResource Accent}" FontSize="12" FontWeight="SemiBold" Margin="0,6,0,0" Visibility="Collapsed" TextWrapping="Wrap"/>
+            <ProgressBar x:Name="JobProgress" Height="3" Margin="0,9,0,0" IsIndeterminate="True" Minimum="0" Maximum="100" Foreground="{StaticResource Accent}" Visibility="Collapsed"/>
+            <TextBlock x:Name="ProgressDetailText" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,5,0,0" Visibility="Collapsed" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
+          </StackPanel>
+          <Button x:Name="CancelButton" Grid.Column="1" Content="{local:Localize 'ยกเลิกงาน'}" Click="Cancel_Click" Visibility="Collapsed" VerticalAlignment="Center"/>
+        </Grid>
       </Border>
     </Grid>
   </Grid>

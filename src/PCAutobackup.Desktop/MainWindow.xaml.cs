@@ -16,6 +16,8 @@ public partial class MainWindow : Window
     private readonly ApplicationService _service;
     private CancellationTokenSource? _jobCancellation;
     private bool _acceptProgress;
+    private readonly Stopwatch _jobElapsed = new();
+    private bool _transferCompleted;
     private bool _loaded;
     private bool _populating;
     private bool _closeAfterJob;
@@ -393,7 +395,7 @@ public partial class MainWindow : Window
         await RunJobAsync(T("กำลังเตรียมสำรองข้อมูล…"), async ct =>
         {
             var result = await _service.BackupAsync(CreateProgress(), ct);
-            _acceptProgress = false;
+            CompleteTransferProgress(result.TotalBytes);
             LastBackupText.Text = F("สำรองสำเร็จล่าสุด {0} · {1:N0} ไฟล์ · {2}", LocalDate(DateTimeOffset.Now), result.FileCount, FormatBytes(result.TotalBytes));
             StatusText.Text = F("สำรองสำเร็จ · {0:N0} ไฟล์ · ส่งข้อมูล {1}", result.FileCount, FormatBytes(result.UploadedBytes));
             ShowWarnings(result.Warnings);
@@ -466,7 +468,7 @@ public partial class MainWindow : Window
         {
             if (Directory.EnumerateFileSystemEntries(dialog.FolderName).Any()) throw new InvalidOperationException(T("กรุณาเลือกโฟลเดอร์ว่าง เพื่อแยกไฟล์ที่กู้คืนจากไฟล์เดิมอย่างชัดเจน"));
             var result = await _service.RestoreAsync(row.Id, dialog.FolderName, CreateProgress(), ct);
-            _acceptProgress = false;
+            CompleteTransferProgress(result.BytesRestored);
             StatusText.Text = F("กู้คืนสำเร็จ · {0:N0} ไฟล์ · {1}", result.FilesRestored, FormatBytes(result.BytesRestored));
             ShowWarnings(result.Warnings);
         });
@@ -475,14 +477,33 @@ public partial class MainWindow : Window
     private IProgress<BackupProgress> CreateProgress()
     {
         var job = _jobCancellation;
-        return new ThrottledProgress(progress => Dispatcher.BeginInvoke(() =>
+        UpdateTransferMetrics(0, null);
+        return new ThrottledProgress(action => Dispatcher.BeginInvoke(action), progress =>
         {
             // Queued progress must not replace a terminal result or update a later job.
             if (!_acceptProgress || job is null || !ReferenceEquals(_jobCancellation, job)) return;
             StatusText.Text = TranslateStage(progress.Stage);
             ProgressDetailText.Text = F("{0:N0} ไฟล์ · {1}", progress.FilesProcessed, FormatBytes(progress.BytesProcessed)) + (string.IsNullOrEmpty(progress.CurrentFile) ? "" : " · " + progress.CurrentFile);
             ProgressDetailText.ToolTip = ProgressDetailText.Text;
-        }));
+            UpdateTransferMetrics(progress.BytesProcessed, progress.TotalBytes);
+        });
+    }
+
+    private void UpdateTransferMetrics(long processedBytes, long? totalBytes, bool completed = false)
+    {
+        var percent = AppLocalization.ProgressPercentage(processedBytes, totalBytes, completed);
+        JobProgress.IsIndeterminate = percent is null;
+        JobProgress.Value = percent ?? 0;
+        ProgressMetricsText.Text = AppLocalization.FormatTransferMetrics(processedBytes, totalBytes, _jobElapsed.Elapsed, _service.Configuration.Language, completed);
+        ProgressMetricsText.Visibility = Visibility.Visible;
+    }
+
+    private void CompleteTransferProgress(long processedBytes)
+    {
+        _acceptProgress = false;
+        _transferCompleted = true;
+        _jobElapsed.Stop();
+        UpdateTransferMetrics(processedBytes, processedBytes, completed: true);
     }
 
     private string TranslateStage(string stage) => stage.ToLowerInvariant() switch
@@ -492,6 +513,7 @@ public partial class MainWindow : Window
         "committing" or "commit" => T("กำลังยืนยันชุดสำรอง…"),
         "pruning" or "retention" => T("กำลังจัดเก็บประวัติตามการตั้งค่า…"),
         "restoring" or "restore" => T("กำลังตรวจสอบและกู้คืนไฟล์…"),
+        "finalizing" => AppLocalization.NormalizeLanguage(_service.Configuration.Language) == "en" ? "Finalizing files…" : "กำลังตรวจสอบขั้นสุดท้าย…",
         _ => T("กำลังทำงาน · ") + stage
     };
 
@@ -500,9 +522,15 @@ public partial class MainWindow : Window
         if (_jobCancellation is not null) return;
         _jobCancellation = new CancellationTokenSource();
         _acceptProgress = true;
+        _transferCompleted = false;
+        _jobElapsed.Restart();
         ReloadConfigurationButton.IsEnabled = false;
         MainContent.IsEnabled = false;
         JobProgress.Visibility = Visibility.Visible;
+        JobProgress.IsIndeterminate = true;
+        JobProgress.Value = 0;
+        ProgressMetricsText.Text = "";
+        ProgressMetricsText.Visibility = Visibility.Collapsed;
         ProgressDetailText.Visibility = Visibility.Visible;
         ProgressDetailText.Text = "";
         CancelButton.Visibility = Visibility.Visible;
@@ -540,13 +568,15 @@ public partial class MainWindow : Window
         finally
         {
             _acceptProgress = false;
+            _jobElapsed.Stop();
             try { if (_loaded) await RefreshRunHistoryAsync(); }
             catch { LatestRunText.Text = T("อ่านสถานะงานล่าสุดไม่ได้ · กดรีเฟรชการตั้งค่าเพื่อลองอีกครั้ง"); }
             _jobCancellation.Dispose();
             _jobCancellation = null;
             ReloadConfigurationButton.IsEnabled = true;
             MainContent.IsEnabled = _loaded;
-            JobProgress.Visibility = Visibility.Collapsed;
+            JobProgress.Visibility = _transferCompleted ? Visibility.Visible : Visibility.Collapsed;
+            ProgressMetricsText.Visibility = _transferCompleted ? Visibility.Visible : Visibility.Collapsed;
             ProgressDetailText.Visibility = Visibility.Collapsed;
             CancelButton.Visibility = Visibility.Collapsed;
             if (_closeAfterJob) Close();
@@ -605,18 +635,30 @@ public partial class MainWindow : Window
         public string SizeDisplay => FormatBytes(Snapshot.TotalBytes);
     }
 
-    // Throttle before enqueueing on the UI thread so fast streaming workers cannot grow the dispatcher queue.
-    private sealed class ThrottledProgress(Action<BackupProgress> report) : IProgress<BackupProgress>
+    // Throttle before enqueueing and keep only the latest report while the UI is busy.
+    private sealed class ThrottledProgress(Action<Action> dispatch, Action<BackupProgress> report) : IProgress<BackupProgress>
     {
+        private readonly object _gate = new();
         private long _lastTimestamp;
+        private BackupProgress? _latest;
+        private bool _pending;
 
         public void Report(BackupProgress value)
         {
-            var now = Stopwatch.GetTimestamp();
-            var previous = Interlocked.Read(ref _lastTimestamp);
-            if (now - previous < Stopwatch.Frequency / 8) return;
-            if (Interlocked.CompareExchange(ref _lastTimestamp, now, previous) != previous) return;
-            report(value);
+            lock (_gate)
+            {
+                _latest = value;
+                var now = Stopwatch.GetTimestamp();
+                if (_pending || now - _lastTimestamp < Stopwatch.Frequency / 8) return;
+                _lastTimestamp = now;
+                _pending = true;
+            }
+            dispatch(() =>
+            {
+                BackupProgress? latest;
+                lock (_gate) { latest = _latest; _latest = null; _pending = false; }
+                if (latest is not null) report(latest);
+            });
         }
     }
 }

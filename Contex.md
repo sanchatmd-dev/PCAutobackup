@@ -146,3 +146,9 @@ Release v2026.11.08-parallel16: เตรียมเผยแพร่ source �
 ตรวจรอบจริง21:00วันที่8พ.ย.2026สำเร็จ21:10:25 Taskresult0 installedCoreproduction16/16 snapshot46files22.26GB ใช้3405chunksเดิมและเพิ่ม1937chunks8.10GBciphertext peakWorkerWS530.89MB(sample526.65MB) private556.59MB ค่าตั้งเดิมยกเว้นOAuthrefresh/Revision รอบถัดไป9พ.ย.21:00 ดูdocs/scheduled21-verification-2026-11-08.md ไม่ได้traceHTTPconcurrencyหรือrestoreไฟล์ผู้ใช้
 
 กู้คืนชุดจริงรอบ21:00โดยผู้ใช้กดWPFทีละขั้น ไปโฟลเดอร์ใหม่ในDocuments สำเร็จ46files22.26GB SHA256ตรงsourceก่อน/หลัง46/46 และchunkHMACตรงsnapshot ต้นฉบับคงเดิม ช่วงเขียนไฟล์ที่สังเกตได้13m54s≈26.67MB/s ไม่ใช่RestoreAsync stopwatch; DesktopprocesslifetimepeakWS383MB sampleช่วงเขียน370.34MB private439.73MB config/SchedulerXMLเดิมคง16/16เวลา21:00 ดูdocs/restore21-verification-2026-11-08.md ไม่มีcommit/pushในงานนี้
+
+เพิ่ม progress telemetry: BackupProgress.TotalBytes nullable, backup pre-scan metadata streaming ไม่เก็บรายชื่อไฟล์ทั้งหมด, รายงานหลังchunk durableรวมdedup และrestoreหลังwritechunk UIแสดง%/processedMB/s/ETAด้วยStopwatch, cap99จนoperationสำเร็จ, latest-only8Hz queue1 ไม่มีresidenttimer คงproduction16/16และscheduleเดิม
+
+Progress featureติดตั้งในเครื่องแล้ว Core91ECA1B972ECFD4CA13FAAFD37928C6890CFF3D7BBC1B4C58FBA0DD9BF727E3A Release178testsผ่าน buildไม่มีwarning/error SHA synthetic2/2 มีin-file31updatesต่อphase config/SchedulerXMLเดิม คง16/16และ21:00 ไม่มีcommit/pushหรืออัปเดตGitHubRelease
+
+เตรียม Release v2026.11.08-progress: ตัวติดตั้งไฟล์เดียวแสดงเปอร์เซ็นต์ ความเร็วประมวลผล MB/s และ ETA ภาษาไทย/อังกฤษ คงproduction16/16และตาราง21:00 พร้อมแนบคู่มือHTMLและSHA256SUMS.txt

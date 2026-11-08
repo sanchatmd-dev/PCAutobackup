@@ -182,6 +182,33 @@ public sealed class BackupEngine
             CheckReparse(path);
             if (store is LocalBackupStore local && PathsOverlap(path, local.RootDirectory)) throw new InvalidOperationException("Source and repository paths must not overlap.");
         }
+        // This estimate does not cache the file list; the actual backup still validates every source.
+        long? estimatedTotal = null;
+        if (progress is not null)
+        {
+            progress.Report(new BackupProgress("scanning"));
+            long total = 0;
+            foreach (var item in config.Sources)
+            {
+                var directories = new Stack<string>();
+                directories.Push(Path.GetFullPath(item.Path));
+                while (directories.Count > 0)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    string directory = directories.Pop();
+                    CheckReparse(directory);
+                    foreach (string path in Directory.EnumerateFileSystemEntries(directory))
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        CheckReparse(path);
+                        if (Directory.Exists(path)) directories.Push(path);
+                        else total = checked(total + new FileInfo(path).Length);
+                    }
+                }
+            }
+            estimatedTotal = total;
+            progress.Report(new BackupProgress("backup", TotalBytes: estimatedTotal));
+        }
         // Authenticate all existing manifests before writing or pruning; wrong keys must never remove data.
         var previous = await ReadAllManifests(ct);
         await EnsureOwner(config.DeviceId, previous.Count != 0, ct);
@@ -193,7 +220,9 @@ public sealed class BackupEngine
         var manifest = new Manifest { Id = now.ToString("yyyyMMddHHmmssfff", System.Globalization.CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N"), CreatedUtc = now, DeviceName = config.DeviceName };
         long count = 0, bytes = 0, uploaded = 0;
         using var chunkCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var pendingChunks = new Dictionary<string, (Task Task, byte[] Buffer)>(StringComparer.Ordinal);
+        var pendingChunks = new Dictionary<string, (Task Task, byte[] Buffer, long LogicalBytes)>(StringComparer.Ordinal);
+        long progressBytes = 0;
+        string? progressPath = null;
         var availableBuffers = new Queue<byte[]>();
         ExceptionDispatchInfo? chunkFailure = null;
         var completedChunks = new HashSet<string>(StringComparer.Ordinal);
@@ -244,6 +273,8 @@ public sealed class BackupEngine
             pendingChunks.Remove(pair.Key);
             availableBuffers.Enqueue(pair.Value.Buffer);
             completedChunks.Add(pair.Key);
+            progressBytes = checked(progressBytes + pair.Value.LogicalBytes);
+            progress?.Report(new BackupProgress("backup", progressPath, count, progressBytes, estimatedTotal));
         }
         try
         {
@@ -266,6 +297,7 @@ public sealed class BackupEngine
                         ct.ThrowIfCancellationRequested(); CheckReparse(path);
                         string relative = current.Relative + "/" + Path.GetFileName(path); ValidateRelativePath(relative);
                         if (Directory.Exists(path)) { pending.Push((path, relative)); continue; }
+                        progressPath = path;
                         var info = new FileInfo(path); long initialLength = info.Length; DateTime modified = info.LastWriteTimeUtc;
                         var entry = new Entry { Path = relative, Length = initialLength, ModifiedUtc = modified };
                         long fileBytes = 0;
@@ -273,15 +305,26 @@ public sealed class BackupEngine
                         {
                             while (true)
                             {
+                                // Reap completed uploads even when repeated chunks share one pending task.
+                                while (pendingChunks.Values.Any(value => value.Task.IsCompleted)) await DrainOne();
                                 while (pendingChunks.Count >= maxConcurrentChunks) await DrainOne();
                                 byte[] buffer = availableBuffers.Count > 0 ? availableBuffers.Dequeue() : new byte[ChunkSize];
                                 int filled = 0, n;
                                 while (filled < buffer.Length && (n = await input.ReadAsync(buffer.AsMemory(filled), chunkCancellation.Token)) > 0) filled += n;
                                 if (filled == 0) { availableBuffers.Enqueue(buffer); break; }
                                 string id = Hash(buffer.AsSpan(0, filled));
-                                if (!completedChunks.Contains(id) && !pendingChunks.ContainsKey(id))
-                                    pendingChunks.Add(id, (ProcessChunk(id, buffer, filled), buffer));
-                                else availableBuffers.Enqueue(buffer);
+                                if (pendingChunks.TryGetValue(id, out var pendingChunk))
+                                {
+                                    pendingChunks[id] = (pendingChunk.Task, pendingChunk.Buffer, checked(pendingChunk.LogicalBytes + filled));
+                                    availableBuffers.Enqueue(buffer);
+                                }
+                                else if (completedChunks.Contains(id))
+                                {
+                                    availableBuffers.Enqueue(buffer);
+                                    progressBytes = checked(progressBytes + filled);
+                                    progress?.Report(new BackupProgress("backup", progressPath, count, progressBytes, estimatedTotal));
+                                }
+                                else pendingChunks.Add(id, (ProcessChunk(id, buffer, filled), buffer, filled));
                                 entry.Chunks.Add(id); fileBytes += filled;
                             }
                         }
@@ -289,7 +332,7 @@ public sealed class BackupEngine
                         info.Refresh();
                         if (!info.Exists || fileBytes != initialLength || info.Length != initialLength || info.LastWriteTimeUtc != modified) throw new IOException("Source file changed during backup: " + path);
                         manifest.Entries.Add(entry); count++; bytes += fileBytes;
-                        progress?.Report(new BackupProgress("backup", path, count, bytes));
+                        progress?.Report(new BackupProgress("backup", path, count, progressBytes, estimatedTotal));
                     }
                 }
             }
@@ -302,6 +345,7 @@ public sealed class BackupEngine
             throw;
         }
         ct.ThrowIfCancellationRequested();
+        progress?.Report(new BackupProgress("finalizing", null, count, progressBytes, estimatedTotal));
         byte[] manifestPlain = JsonSerializer.SerializeToUtf8Bytes(manifest, JsonOptions);
         if (manifestPlain.Length > 256 * 1024 * 1024 - 32) throw new InvalidOperationException("Snapshot manifest exceeds the supported size.");
         byte[] manifestBytes = Encrypt(manifestPlain, "manifest:" + manifest.Id);
@@ -363,6 +407,8 @@ public sealed class BackupEngine
     public async Task<RestoreResult> RestoreAsync(string snapshotId, string destinationDirectory, IProgress<BackupProgress>? progress = null, CancellationToken ct = default)
     {
         var manifest = await ReadManifest(snapshotId, ct);
+        long totalBytes = manifest.Entries.Where(entry => !entry.Directory).Sum(entry => entry.Length);
+        progress?.Report(new BackupProgress("restore", TotalBytes: totalBytes));
         string root = Path.GetFullPath(destinationDirectory); CheckReparse(root);
         if (File.Exists(root)) throw new IOException("Restore destination is a file.");
         if (Directory.Exists(root) && Directory.EnumerateFileSystemEntries(root).Any()) throw new IOException("Restore destination must be empty.");
@@ -408,6 +454,7 @@ public sealed class BackupEngine
                         written = checked(written + chunk.Length);
                         if (written > entry.Length) throw new InvalidDataException("File exceeds manifest length.");
                         await output.WriteAsync(chunk, chunkCancellation.Token);
+                        progress?.Report(new BackupProgress("restore", path, files, checked(bytes + written), totalBytes));
                     }
                 }
                 catch
@@ -422,7 +469,7 @@ public sealed class BackupEngine
             }
             catch { if (created && File.Exists(path)) File.Delete(path); throw; }
             File.SetLastWriteTimeUtc(path, entry.ModifiedUtc.UtcDateTime);
-            files++; bytes += written; progress?.Report(new BackupProgress("restore", path, files, bytes));
+            files++; bytes += written; progress?.Report(new BackupProgress("restore", path, files, bytes, totalBytes));
         }
         return new RestoreResult(files, bytes, []);
     }
