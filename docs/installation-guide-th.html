@@ -4,7 +4,7 @@
 :root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#eef3f2;color:#19332f;font:17px/1.8 "Leelawadee UI",Tahoma,system-ui,sans-serif}main{max-width:960px;margin:32px auto;padding:40px 52px;background:white;border:1px solid #d7e3df;border-radius:16px}h1{font-size:30px;line-height:1.45;color:#164b40;margin-top:0}h2{margin-top:2em;padding-top:.5em;border-top:2px solid #dce9e4;font-size:24px;color:#164b40}h3{font-size:20px}a{color:#126851;text-underline-offset:3px;overflow-wrap:anywhere}p,li{overflow-wrap:anywhere}li{margin:.45em 0}strong{color:#163f35}code{font-size:.92em;background:#eef4f1;padding:2px 5px;border-radius:4px}pre{padding:16px;background:#eef4f1;overflow:auto;border-radius:8px}pre code{padding:0}table{width:100%;border-collapse:collapse;font-size:16px}th,td{padding:12px;border:1px solid #d7e3df;text-align:left;vertical-align:top}th{background:#edf5f1}input{accent-color:#126851}.banner{padding:12px 16px;margin-bottom:28px;background:#e9f3ef;border-radius:8px;font-size:15px}@media(max-width:640px){main{margin:0;padding:24px 18px;border-radius:0}h1{font-size:26px}h2{font-size:22px}table{font-size:14px}th,td{padding:7px}}@media print{body{background:white;color:black;font-size:11pt}main{max-width:none;margin:0;padding:0;border:0;border-radius:0}h2,h3{break-after:avoid}li,tr,pre{break-inside:avoid}a{color:#164b40}pre{white-space:pre-wrap}table{font-size:10pt}.banner{font-size:10pt} @page{size:A4;margin:18mm}}
 </style></head><body><main><div class="banner">คู่มือสำหรับส่งต่อผู้ติดตั้งใหม่ • เปิดอ่านได้โดยไม่ใช้อินเทอร์เน็ต ยกเว้นลิงก์ภายนอก • พิมพ์หรือบันทึกเป็น PDF ผ่าน Ctrl+P</div>
 <h1 id="pc-autobackup">คู่มือติดตั้ง PC AutoBackup สำหรับผู้ใช้ใหม่</h1>
-<p>สำหรับ <strong>v2026.11.08-resume บน Windows x64</strong> ตรวจขั้นตอนเทียบกับแอปรุ่นนี้เมื่อ 8 พฤศจิกายน 2026</p>
+<p>สำหรับ <strong>v2026.11.08-parallel16 บน Windows x64</strong> ตรวจขั้นตอนเทียบกับแอปรุ่นนี้เมื่อ 8 พฤศจิกายน 2026</p>
 <p>เป้าหมาย: สำรองโฟลเดอร์ที่เลือกไป Google Drive แบบเข้ารหัส <strong>วันละครั้ง 21:00 ตามเวลาของ Windows</strong> เก็บประวัติเริ่มต้น <strong>7 วัน</strong> และเตรียมกุญแจสำหรับกู้คืนเมื่อเครื่องเสีย</p>
 <h2 id="section">เตรียมก่อนเริ่ม</h2>
 <ul>
@@ -16,8 +16,8 @@
 </ul>
 <h2 id="exe">1. ดาวน์โหลดและติดตั้ง .exe</h2>
 <ol>
-<li>เปิด <a href="https://github.com/sanchatmd-dev/PCAutobackup/releases/tag/v2026.11.08-resume">หน้า Release รุ่น Resume</a></li>
-<li>ใน <strong>Assets</strong> ดาวน์โหลด <strong>PCAutobackup-win-x64.exe</strong> ประมาณ 206.64 MB อย่าเลือก Source code ZIP แทน</li>
+<li>เปิด <a href="https://github.com/sanchatmd-dev/PCAutobackup/releases/tag/v2026.11.08-parallel16">หน้า Release รุ่น 16 ก้อน</a></li>
+<li>ใน <strong>Assets</strong> ดาวน์โหลด <strong>PCAutobackup-win-x64.exe</strong> ประมาณ 207 MB อย่าเลือก Source code ZIP แทน</li>
 <li>หากอัปเดตเครื่องที่ติดตั้งอยู่แล้ว ให้ปิดหน้าตั้งค่าและรอให้งานสำรอง/กู้คืนเสร็จก่อนติดตั้งทับ ไม่ต้องลบการตั้งค่าเดิม</li>
 <li>ดับเบิลคลิก <code>.exe</code> รอติดตั้งจนเสร็จ แอปจะเปิด พร้อมไอคอนเมฆ <strong>PC AutoBackup</strong> บน Desktop และ Start Menu</li>
 <li>เปิดจากไอคอน Desktop ได้ในครั้งถัดไป ภาษาไทยเป็นค่าเริ่มต้น เปลี่ยนเป็น English ได้ที่ <strong>การตั้งค่า → ภาษาของแอป</strong></li>

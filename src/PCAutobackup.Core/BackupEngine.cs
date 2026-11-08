@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -11,12 +12,18 @@ public sealed class BackupEngine
     private readonly IBackupStore store;
     private readonly byte[] encryptionKey, namingKey;
     private readonly TimeProvider timeProvider;
+    private readonly int maxConcurrentChunks;
+    private readonly int maxConcurrentRestoreChunks;
     private static readonly Regex ChunkId = new("^[a-f0-9]{64}$", RegexOptions.CultureInvariant);
     private static readonly Regex SnapshotId = new("^[0-9]{17}-[a-f0-9]{32}$", RegexOptions.CultureInvariant);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = false };
 
-    public BackupEngine(IBackupStore store, byte[] recoveryKey, TimeProvider? timeProvider = null)
+    public BackupEngine(IBackupStore store, byte[] recoveryKey, TimeProvider? timeProvider = null, int maxConcurrentChunks = 1, int maxConcurrentRestoreChunks = 1)
     {
+        if (maxConcurrentChunks is < 1 or > 32) throw new ArgumentOutOfRangeException(nameof(maxConcurrentChunks));
+        if (maxConcurrentRestoreChunks is < 1 or > 32) throw new ArgumentOutOfRangeException(nameof(maxConcurrentRestoreChunks));
+        this.maxConcurrentChunks = maxConcurrentChunks;
+        this.maxConcurrentRestoreChunks = maxConcurrentRestoreChunks;
         this.store = store ?? throw new ArgumentNullException(nameof(store));
         this.timeProvider = timeProvider ?? TimeProvider.System;
         if (recoveryKey is null || recoveryKey.Length != 32) throw new ArgumentException("Recovery key must be 32 bytes.", nameof(recoveryKey));
@@ -73,7 +80,7 @@ public sealed class BackupEngine
         return memory.ToArray();
     }
     private async Task Put(string name, byte[] bytes, CancellationToken ct)
-    { using var data = new MemoryStream(bytes, false); await store.PutAsync(name, data, false, ct); }
+    { using var data = new MemoryStream(bytes, 0, bytes.Length, writable: false, publiclyVisible: true); await store.PutAsync(name, data, false, ct); }
     private async Task<byte[]> ReadChunk(string id, CancellationToken ct)
     {
         if (!ChunkId.IsMatch(id)) throw new InvalidDataException("Invalid chunk ID.");
@@ -185,66 +192,114 @@ public sealed class BackupEngine
         var now = timeProvider.GetUtcNow();
         var manifest = new Manifest { Id = now.ToString("yyyyMMddHHmmssfff", System.Globalization.CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N"), CreatedUtc = now, DeviceName = config.DeviceName };
         long count = 0, bytes = 0, uploaded = 0;
-        byte[] buffer = new byte[ChunkSize];
-        for (int sourceIndex = 0; sourceIndex < config.Sources.Count; sourceIndex++)
+        using var chunkCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var pendingChunks = new Dictionary<string, (Task Task, byte[] Buffer)>(StringComparer.Ordinal);
+        var availableBuffers = new Queue<byte[]>();
+        ExceptionDispatchInfo? chunkFailure = null;
+        var completedChunks = new HashSet<string>(StringComparer.Ordinal);
+        async Task ProcessChunk(string id, byte[] buffer, int filled)
         {
-            ct.ThrowIfCancellationRequested();
-            string source = Path.GetFullPath(config.Sources[sourceIndex].Path);
-            if (!Directory.Exists(source)) throw new DirectoryNotFoundException("Source unavailable: " + source);
-            if (store is LocalBackupStore local && PathsOverlap(source, local.RootDirectory)) throw new InvalidOperationException("Source and repository paths must not overlap.");
-            CheckReparse(source);
-            if (string.IsNullOrWhiteSpace(config.Sources[sourceIndex].Id) || !sourceIds.Add(config.Sources[sourceIndex].Id)) throw new InvalidOperationException("Source IDs must be nonempty and unique.");
-            string prefix = SourceFolderName(config.Sources[sourceIndex], source);
-            var pending = new Stack<(string Directory, string Relative)>(); pending.Push((source, prefix));
-            while (pending.Count > 0)
+            var token = chunkCancellation.Token;
+            try
             {
-                ct.ThrowIfCancellationRequested(); var current = pending.Pop(); CheckReparse(current.Directory);
-                manifest.Entries.Add(new Entry { Path = current.Relative, Directory = true });
-                foreach (string path in Directory.EnumerateFileSystemEntries(current.Directory))
+                string name = ChunkName(id);
+                if (await store.ExistsAsync(name, token))
                 {
-                    ct.ThrowIfCancellationRequested(); CheckReparse(path);
-                    string relative = current.Relative + "/" + Path.GetFileName(path); ValidateRelativePath(relative);
-                    if (Directory.Exists(path)) { pending.Push((path, relative)); continue; }
-                    var info = new FileInfo(path); long initialLength = info.Length; DateTime modified = info.LastWriteTimeUtc;
-                    var entry = new Entry { Path = relative, Length = initialLength, ModifiedUtc = modified };
-                    long fileBytes = 0;
-                    await using (var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.Asynchronous | FileOptions.SequentialScan))
+                    if (!trustedChunks.Contains(id))
                     {
-                        while (true)
+                        try
                         {
-                            int filled = 0, n;
-                            while (filled < buffer.Length && (n = await input.ReadAsync(buffer.AsMemory(filled), ct)) > 0) filled += n;
-                            if (filled == 0) break;
-                            string id = Hash(buffer.AsSpan(0, filled)); string name = ChunkName(id);
-                            if (await store.ExistsAsync(name, ct))
-                            {
-                                if (!trustedChunks.Contains(id))
-                                {
-                                    try
-                                    {
-                                        byte[] existing = await ReadChunk(id, ct);
-                                        if (!existing.AsSpan().SequenceEqual(buffer.AsSpan(0, filled))) throw new InvalidDataException("Existing chunk does not match its name.");
-                                    }
-                                    catch (Exception ex) when (ex is CryptographicException or InvalidDataException)
-                                    {
-                                        // This orphan is not referenced by a committed snapshot. Replace a
-                                        // corrupted interrupted upload, preserving all committed chunks.
-                                        await store.DeleteAsync(name, ct);
-                                        byte[] encrypted = Encrypt(buffer.AsSpan(0, filled), "chunk:" + id);
-                                        await Put(name, encrypted, ct); uploaded += encrypted.Length;
-                                    }
-                                }
-                            }
-                            else { byte[] encrypted = Encrypt(buffer.AsSpan(0, filled), "chunk:" + id); await Put(name, encrypted, ct); uploaded += encrypted.Length; }
-                            entry.Chunks.Add(id); fileBytes += filled;
+                            byte[] existing = await ReadChunk(id, token);
+                            if (!existing.AsSpan().SequenceEqual(buffer.AsSpan(0, filled))) throw new InvalidDataException("Existing chunk does not match its name.");
+                        }
+                        catch (Exception ex) when (ex is CryptographicException or InvalidDataException)
+                        {
+                            // This orphan is not referenced by a committed snapshot. Replace a
+                            // corrupted interrupted upload, preserving all committed chunks.
+                            await store.DeleteAsync(name, token);
+                            byte[] encrypted = Encrypt(buffer.AsSpan(0, filled), "chunk:" + id);
+                            await Put(name, encrypted, token); Interlocked.Add(ref uploaded, encrypted.Length);
                         }
                     }
-                    info.Refresh();
-                    if (!info.Exists || fileBytes != initialLength || info.Length != initialLength || info.LastWriteTimeUtc != modified) throw new IOException("Source file changed during backup: " + path);
-                    manifest.Entries.Add(entry); count++; bytes += fileBytes;
-                    progress?.Report(new BackupProgress("backup", path, count, bytes));
+                }
+                else
+                {
+                    byte[] encrypted = Encrypt(buffer.AsSpan(0, filled), "chunk:" + id);
+                    await Put(name, encrypted, token); Interlocked.Add(ref uploaded, encrypted.Length);
                 }
             }
+            catch (Exception ex)
+            {
+                if (ex is not OperationCanceledException)
+                    Interlocked.CompareExchange(ref chunkFailure, ExceptionDispatchInfo.Capture(ex), null);
+                chunkCancellation.Cancel();
+                throw;
+            }
+        }
+        async Task DrainOne()
+        {
+            Task finished = await Task.WhenAny(pendingChunks.Values.Select(value => value.Task));
+            var pair = pendingChunks.First(item => ReferenceEquals(item.Value.Task, finished));
+            await pair.Value.Task;
+            pendingChunks.Remove(pair.Key);
+            availableBuffers.Enqueue(pair.Value.Buffer);
+            completedChunks.Add(pair.Key);
+        }
+        try
+        {
+            for (int sourceIndex = 0; sourceIndex < config.Sources.Count; sourceIndex++)
+            {
+                ct.ThrowIfCancellationRequested();
+                string source = Path.GetFullPath(config.Sources[sourceIndex].Path);
+                if (!Directory.Exists(source)) throw new DirectoryNotFoundException("Source unavailable: " + source);
+                if (store is LocalBackupStore local && PathsOverlap(source, local.RootDirectory)) throw new InvalidOperationException("Source and repository paths must not overlap.");
+                CheckReparse(source);
+                if (string.IsNullOrWhiteSpace(config.Sources[sourceIndex].Id) || !sourceIds.Add(config.Sources[sourceIndex].Id)) throw new InvalidOperationException("Source IDs must be nonempty and unique.");
+                string prefix = SourceFolderName(config.Sources[sourceIndex], source);
+                var pending = new Stack<(string Directory, string Relative)>(); pending.Push((source, prefix));
+                while (pending.Count > 0)
+                {
+                    ct.ThrowIfCancellationRequested(); var current = pending.Pop(); CheckReparse(current.Directory);
+                    manifest.Entries.Add(new Entry { Path = current.Relative, Directory = true });
+                    foreach (string path in Directory.EnumerateFileSystemEntries(current.Directory))
+                    {
+                        ct.ThrowIfCancellationRequested(); CheckReparse(path);
+                        string relative = current.Relative + "/" + Path.GetFileName(path); ValidateRelativePath(relative);
+                        if (Directory.Exists(path)) { pending.Push((path, relative)); continue; }
+                        var info = new FileInfo(path); long initialLength = info.Length; DateTime modified = info.LastWriteTimeUtc;
+                        var entry = new Entry { Path = relative, Length = initialLength, ModifiedUtc = modified };
+                        long fileBytes = 0;
+                        await using (var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.Asynchronous | FileOptions.SequentialScan))
+                        {
+                            while (true)
+                            {
+                                while (pendingChunks.Count >= maxConcurrentChunks) await DrainOne();
+                                byte[] buffer = availableBuffers.Count > 0 ? availableBuffers.Dequeue() : new byte[ChunkSize];
+                                int filled = 0, n;
+                                while (filled < buffer.Length && (n = await input.ReadAsync(buffer.AsMemory(filled), chunkCancellation.Token)) > 0) filled += n;
+                                if (filled == 0) { availableBuffers.Enqueue(buffer); break; }
+                                string id = Hash(buffer.AsSpan(0, filled));
+                                if (!completedChunks.Contains(id) && !pendingChunks.ContainsKey(id))
+                                    pendingChunks.Add(id, (ProcessChunk(id, buffer, filled), buffer));
+                                else availableBuffers.Enqueue(buffer);
+                                entry.Chunks.Add(id); fileBytes += filled;
+                            }
+                        }
+                        while (pendingChunks.Count > 0) await DrainOne();
+                        info.Refresh();
+                        if (!info.Exists || fileBytes != initialLength || info.Length != initialLength || info.LastWriteTimeUtc != modified) throw new IOException("Source file changed during backup: " + path);
+                        manifest.Entries.Add(entry); count++; bytes += fileBytes;
+                        progress?.Report(new BackupProgress("backup", path, count, bytes));
+                    }
+                }
+            }
+        }
+        catch
+        {
+            chunkCancellation.Cancel();
+            try { await Task.WhenAll(pendingChunks.Values.Select(value => value.Task)); } catch { }
+            if (!ct.IsCancellationRequested) chunkFailure?.Throw();
+            throw;
         }
         ct.ThrowIfCancellationRequested();
         byte[] manifestPlain = JsonSerializer.SerializeToUtf8Bytes(manifest, JsonOptions);
@@ -327,12 +382,40 @@ public sealed class BackupEngine
             {
                 await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.Asynchronous | FileOptions.SequentialScan);
                 created = true;
-                foreach (var id in entry.Chunks)
+                using var chunkCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                var pending = new Queue<Task<byte[]>>();
+                ExceptionDispatchInfo? chunkFailure = null;
+                async Task<byte[]> FetchChunk(string id)
                 {
-                    byte[] chunk = await ReadChunk(id, ct);
-                    written = checked(written + chunk.Length);
-                    if (written > entry.Length) throw new InvalidDataException("File exceeds manifest length.");
-                    await output.WriteAsync(chunk, ct);
+                    try { return await ReadChunk(id, chunkCancellation.Token); }
+                    catch (Exception ex)
+                    {
+                        if (ex is not OperationCanceledException)
+                            Interlocked.CompareExchange(ref chunkFailure, ExceptionDispatchInfo.Capture(ex), null);
+                        chunkCancellation.Cancel();
+                        throw;
+                    }
+                }
+                try
+                {
+                    int next = 0;
+                    while (next < entry.Chunks.Count || pending.Count > 0)
+                    {
+                        while (next < entry.Chunks.Count && pending.Count < maxConcurrentRestoreChunks)
+                            pending.Enqueue(FetchChunk(entry.Chunks[next++]));
+                        byte[] chunk = await pending.Peek();
+                        _ = pending.Dequeue();
+                        written = checked(written + chunk.Length);
+                        if (written > entry.Length) throw new InvalidDataException("File exceeds manifest length.");
+                        await output.WriteAsync(chunk, chunkCancellation.Token);
+                    }
+                }
+                catch
+                {
+                    chunkCancellation.Cancel();
+                    try { await Task.WhenAll(pending); } catch { }
+                    if (!ct.IsCancellationRequested) chunkFailure?.Throw();
+                    throw;
                 }
                 if (written != entry.Length) throw new InvalidDataException("File length does not match manifest.");
                 await output.FlushAsync(ct);

@@ -13,15 +13,69 @@ public sealed class GoogleDriveBackupStore : IBackupStore
     private readonly GoogleSession session;
     private readonly string folderId;
     private readonly SemaphoreSlim mutationLock = new(1, 1);
+    private readonly SemaphoreSlim mutationSlots;
+    private readonly SemaphoreSlim[] chunkNameLocks;
+    private readonly bool optimizeChunkUploads;
+    private readonly int maxConcurrentMutations;
+    private const int OptimizedChunkLimit = 4 * 1024 * 1024 + 32;
     private readonly Dictionary<string, DriveFile> lookupCache = new(StringComparer.Ordinal);
     private readonly Queue<string> cacheOrder = new();
     private const int CacheLimit = 2048;
 
-    internal GoogleDriveBackupStore(GoogleSession session, string folderId) { this.session = session; this.folderId = folderId; }
-
-    public static async Task<GoogleDriveBackupStore> CreateAsync(AppConfiguration config, Func<Task> saveConfiguration, CancellationToken ct = default)
+    internal GoogleDriveBackupStore(GoogleSession session, string folderId, bool optimizeChunkUploads = false, int maxConcurrentMutations = 1)
     {
-        var session = new GoogleSession(config, saveConfiguration);
+        if (maxConcurrentMutations is < 1 or > 32) throw new ArgumentOutOfRangeException(nameof(maxConcurrentMutations));
+        this.session = session;
+        this.folderId = folderId;
+        this.optimizeChunkUploads = optimizeChunkUploads;
+        this.maxConcurrentMutations = maxConcurrentMutations;
+        mutationSlots = new(maxConcurrentMutations, maxConcurrentMutations);
+        chunkNameLocks = maxConcurrentMutations > 1 ? Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1)).ToArray() : [];
+    }
+
+    private async Task<IDisposable> AcquireMutationAsync(string name, bool chunkPut, CancellationToken ct)
+    {
+        // Bounded name stripes serialize conflicting uploads without retaining every object name.
+        var nameLock = chunkPut && chunkNameLocks.Length > 0 ? chunkNameLocks[(uint)StringComparer.Ordinal.GetHashCode(name) % (uint)chunkNameLocks.Length] : null;
+        var nameHeld = false;
+        var gateHeld = false;
+        var acquired = 0;
+        try
+        {
+            if (nameLock is not null) { await nameLock.WaitAsync(ct); nameHeld = true; }
+            // Only one caller acquires slots at a time. Exclusive mutations cannot each
+            // hold a partial set while waiting for one another's remaining slots.
+            await mutationLock.WaitAsync(ct);
+            gateHeld = true;
+            var required = chunkPut ? 1 : maxConcurrentMutations;
+            while (acquired < required) { await mutationSlots.WaitAsync(ct); acquired++; }
+            if (chunkPut) { mutationLock.Release(); gateHeld = false; }
+            return new MutationLease(this, nameLock, acquired, gateHeld);
+        }
+        catch
+        {
+            if (acquired > 0) mutationSlots.Release(acquired);
+            if (gateHeld) mutationLock.Release();
+            if (nameHeld) nameLock!.Release();
+            throw;
+        }
+    }
+
+    private sealed class MutationLease(GoogleDriveBackupStore store, SemaphoreSlim? nameLock, int slots, bool gateHeld) : IDisposable
+    {
+        public void Dispose()
+        {
+            store.mutationSlots.Release(slots);
+            if (gateHeld) store.mutationLock.Release();
+            nameLock?.Release();
+        }
+    }
+
+    public static Task<GoogleDriveBackupStore> CreateAsync(AppConfiguration config, Func<Task> saveConfiguration, CancellationToken ct = default) =>
+        CreateAsync(config, saveConfiguration, new GoogleSession(config, saveConfiguration), ct);
+
+    internal static async Task<GoogleDriveBackupStore> CreateAsync(AppConfiguration config, Func<Task> saveConfiguration, GoogleSession session, CancellationToken ct = default)
+    {
         string folder;
         if (!string.IsNullOrWhiteSpace(config.GoogleRootFolderId))
         {
@@ -43,7 +97,7 @@ public sealed class GoogleDriveBackupStore : IBackupStore
             config.GoogleRootFolderId = folder;
             await saveConfiguration();
         }
-        return new(session, folder);
+        return new(session, folder, optimizeChunkUploads: true, maxConcurrentMutations: 16);
     }
 
     public async Task<bool> ExistsAsync(string name, CancellationToken ct = default) => await FindAsync(name, ct) is not null;
@@ -63,7 +117,7 @@ public sealed class GoogleDriveBackupStore : IBackupStore
     public async Task PutAsync(string name, Stream content, bool overwrite = false, CancellationToken ct = default)
     {
         ValidateName(name);
-        await mutationLock.WaitAsync(ct);
+        using var mutation = await AcquireMutationAsync(name, name.StartsWith("chunks/", StringComparison.Ordinal), ct);
         string? temporary = null;
         try
         {
@@ -89,7 +143,6 @@ public sealed class GoogleDriveBackupStore : IBackupStore
         finally
         {
             if (temporary is not null) { try { File.Delete(temporary); } catch (IOException) { } }
-            mutationLock.Release();
         }
     }
 
@@ -157,27 +210,34 @@ public sealed class GoogleDriveBackupStore : IBackupStore
         if (!location.IsAbsoluteUri || location.Scheme != "https" || !location.Host.Equals("www.googleapis.com", StringComparison.OrdinalIgnoreCase) ||
             !location.IsDefaultPort || !string.IsNullOrEmpty(location.UserInfo) || !string.IsNullOrEmpty(location.Fragment))
             throw new IOException("Google คืน upload endpoint ที่ไม่ถูกต้อง");
-        var buffer = new byte[1024 * 1024]; // Multiple of 256 KiB, bounded independently of file size.
+        var singleRequest = optimizeChunkUploads && name.StartsWith("chunks/", StringComparison.Ordinal) && length <= OptimizedChunkLimit;
+        ArraySegment<byte> source = default;
+        var direct = singleRequest && content is MemoryStream memory && memory.TryGetBuffer(out source);
+        // Small encrypted chunks fit one final request. Exposed MemoryStream slices need no
+        // second payload buffer; other streams and larger objects keep bounded allocations.
+        var buffer = direct ? source.Array! : new byte[singleRequest ? Math.Max(1, (int)length) : 1024 * 1024]; // Streaming blocks remain multiples of 256 KiB, bounded independently of file size.
         long offset = 0;
         var stalled = 0;
         do
         {
             ct.ThrowIfCancellationRequested();
             content.Position = start + offset;
-            var needed = (int)Math.Min(buffer.Length, length - offset);
+            var needed = (int)Math.Min(singleRequest ? length : buffer.Length, length - offset);
+            var bufferOffset = direct ? checked(source.Offset + (int)(start + offset)) : 0;
             var read = 0;
-            while (read < needed)
+            while (!direct && read < needed)
             {
                 var count = await content.ReadAsync(buffer.AsMemory(read, needed - read), ct);
                 if (count == 0) throw new EndOfStreamException("สตรีมอัปโหลดสั้นกว่าขนาดที่ระบุ");
                 read += count;
             }
+            if (direct) content.Position = start + offset + needed;
             HttpResponseMessage? response = null;
             try
             {
                 response = await session.SendAsync(() =>
                 {
-                    var request = new HttpRequestMessage(HttpMethod.Put, location) { Content = new ByteArrayContent(buffer, 0, needed) };
+                    var request = new HttpRequestMessage(HttpMethod.Put, location) { Content = new ByteArrayContent(buffer, bufferOffset, needed) };
                     request.Content.Headers.ContentType = new("application/octet-stream");
                     request.Content.Headers.ContentRange = needed == 0 ? new ContentRangeHeaderValue(length) : new ContentRangeHeaderValue(offset, offset + needed - 1, length);
                     return request;
@@ -235,17 +295,14 @@ public sealed class GoogleDriveBackupStore : IBackupStore
 
     public async Task DeleteAsync(string name, CancellationToken ct = default)
     {
-        await mutationLock.WaitAsync(ct);
-        try
-        {
-            var file = await FindAsync(name, ct, fresh: true);
-            if (file is null) return;
-            // FindAsync restricts both direct parent and app marker; arbitrary destination files are never touched.
-            using var response = await session.SendAsync(() => new HttpRequestMessage(HttpMethod.Delete, "https://www.googleapis.com/drive/v3/files/" + Uri.EscapeDataString(file.Id)), ct);
-            if (response.StatusCode != HttpStatusCode.NotFound) await GoogleSession.EnsureSuccessAsync(response, ct);
-            lock (lookupCache) lookupCache.Remove(name);
-        }
-        finally { mutationLock.Release(); }
+        ValidateName(name);
+        using var mutation = await AcquireMutationAsync(name, false, ct);
+        var file = await FindAsync(name, ct, fresh: true);
+        if (file is null) return;
+        // FindAsync restricts both direct parent and app marker; arbitrary destination files are never touched.
+        using var response = await session.SendAsync(() => new HttpRequestMessage(HttpMethod.Delete, "https://www.googleapis.com/drive/v3/files/" + Uri.EscapeDataString(file.Id)), ct);
+        if (response.StatusCode != HttpStatusCode.NotFound) await GoogleSession.EnsureSuccessAsync(response, ct);
+        lock (lookupCache) lookupCache.Remove(name);
     }
 
     public async IAsyncEnumerable<StoredObject> ListAsync(string prefix, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
@@ -310,7 +367,13 @@ public sealed class GoogleDriveBackupStore : IBackupStore
             name.Split('/').Any(x => x is "" or "." or "..")) throw new ArgumentException("Invalid repository-relative object name", nameof(name));
     }
 
-    public ValueTask DisposeAsync() { mutationLock.Dispose(); return ValueTask.CompletedTask; }
+    public ValueTask DisposeAsync()
+    {
+        mutationLock.Dispose();
+        mutationSlots.Dispose();
+        foreach (var nameLock in chunkNameLocks) nameLock.Dispose();
+        return ValueTask.CompletedTask;
+    }
 
     private sealed class ResponseStream(Stream inner, HttpResponseMessage response) : Stream
     {

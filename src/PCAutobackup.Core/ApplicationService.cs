@@ -10,6 +10,7 @@ public sealed class ApplicationService
 {
     public string ConfigurationPath { get; }
     public AppConfiguration Configuration { get; private set; } = new();
+    private const int ProductionChunkConcurrency = 16;
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly TimeProvider timeProvider;
     private string? recoveryLocalPath;
@@ -25,6 +26,9 @@ public sealed class ApplicationService
         ConfigurationPath = Path.GetFullPath(configPath ?? AppPaths.ConfigurationFile);
         this.timeProvider = timeProvider ?? TimeProvider.System;
     }
+
+    internal BackupEngine CreateProductionEngine(IBackupStore store, byte[] key) =>
+        new(store, key, timeProvider, maxConcurrentChunks: ProductionChunkConcurrency, maxConcurrentRestoreChunks: ProductionChunkConcurrency);
 
     public async Task<AppConfiguration> LoadConfigurationAsync()
     {
@@ -215,7 +219,7 @@ public sealed class ApplicationService
                 await using var store = await OpenStoreAsync(false, ct);
                 using var repositoryLock = OperationLock.Acquire(RepositoryIdentity(false));
                 using var localLease = (store as LocalBackupStore)?.AcquireLease();
-                var engine = new BackupEngine(store, key, timeProvider);
+                var engine = CreateProductionEngine(store, key);
                 var config = Clone(Configuration);
                 if (config.IncludeApplicationInventory)
                 {
@@ -293,7 +297,7 @@ public sealed class ApplicationService
             await using var store = await OpenStoreAsync(true, ct);
             using var repositoryLock = OperationLock.Acquire(RepositoryIdentity(true));
             using var localLease = (store as LocalBackupStore)?.AcquireLease();
-            return await new BackupEngine(store, key).RestoreAsync(id, destination, progress, ct);
+            return await CreateProductionEngine(store, key).RestoreAsync(id, destination, progress, ct);
         }
         finally { if (key is not null) CryptographicOperations.ZeroMemory(key); gate.Release(); }
     }
