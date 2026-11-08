@@ -17,6 +17,8 @@ public sealed class ApplicationService
     private string? recoveryProtectedKey;
     private string StatusPath => ConfigurationPath + ".status.json";
     private string SuccessPath => ConfigurationPath + ".success.json";
+    private string ScheduledSkipPath => ConfigurationPath + ".scheduled-skip.json";
+    public RunStatus? ScheduledSkip { get; private set; }
 
     public ApplicationService(string? configPath = null, TimeProvider? timeProvider = null)
     {
@@ -178,7 +180,20 @@ public sealed class ApplicationService
         byte[]? key = null;
         try
         {
-            using var configLock = OperationLock.Acquire(ConfigurationPath);
+            ScheduledSkip = null;
+            using var configLock = scheduled ? OperationLock.TryAcquire(ConfigurationPath) : OperationLock.Acquire(ConfigurationPath);
+            if (configLock is null)
+            {
+                // Never replace the active owner's status, success marker or configuration.
+                var now = timeProvider.GetUtcNow();
+                ScheduledSkip = new RunStatus
+                {
+                    Status = "Skipped", Message = "ข้ามเพราะมีงานกำลังทำอยู่",
+                    StartedUtc = now, CompletedUtc = now
+                };
+                await ConfigurationStore.WriteJsonAtomicAsync(ScheduledSkipPath, ScheduledSkip, ct);
+                return null;
+            }
             var status = new RunStatus { Status = "Running", StartedUtc = timeProvider.GetUtcNow(), Message = "กำลังสำรองข้อมูล" };
             try
             {
@@ -338,6 +353,7 @@ public sealed class ApplicationService
         return status;
     }
     public Task<RunStatus?> GetLastSuccessAsync() => ReadStatusAsync(SuccessPath);
+    public Task<RunStatus?> GetLastScheduledSkipAsync() => ReadStatusAsync(ScheduledSkipPath);
     private static async Task<RunStatus?> ReadStatusAsync(string path)
     {
         if (!File.Exists(path)) return null;

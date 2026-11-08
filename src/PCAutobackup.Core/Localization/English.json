@@ -316,5 +316,9 @@
   "เส้นทางกู้คืนออกนอกปลายทาง": "Restore path escaped destination.",
   "ไฟล์มีขนาดเกินที่ระบุในรายการชุดสำรอง": "File exceeds manifest length.",
   "ขนาดไฟล์ไม่ตรงกับรายการชุดสำรอง": "File length does not match manifest.",
-  "ไทย (ค่าเริ่มต้น)": "ไทย (default)"
+  "ไทย (ค่าเริ่มต้น)": "ไทย (default)",
+  "พบวัตถุจากงานอื่นระหว่างเริ่มอัปโหลดใหม่ หยุดเพื่อป้องกันข้อมูลซ้ำ": "Another writer's object appeared while restarting the upload; stopped to prevent duplicates.",
+  "Google Drive upload session ใช้งานไม่ได้หลังเริ่มใหม่ครบจำนวนครั้งแล้ว": "Google Drive upload session remains unavailable after the bounded restarts.",
+  "ข้ามเพราะมีงานกำลังทำอยู่": "Skipped because another job is running",
+  "รอบอัตโนมัติที่ข้ามล่าสุด · {0} · {1}": "Last skipped scheduled attempt · {0} · {1}"
 }

@@ -94,12 +94,16 @@ internal sealed class OperationLock : IDisposable
     private readonly FileStream stream;
     private OperationLock(FileStream stream) => this.stream = stream;
     public static OperationLock Acquire(string identity)
+        => TryAcquire(identity) ?? throw new IOException("มีงานสำรองหรือกู้คืนกำลังทำงานอยู่ กรุณารอให้เสร็จก่อน");
+
+    // Only sharing/lock violations mean busy. Disk and permission errors must still fail.
+    public static OperationLock? TryAcquire(string identity)
     {
         var directory = Path.Combine(AppPaths.DataDirectory, "locks");
         Directory.CreateDirectory(directory);
         var name = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity.ToUpperInvariant())));
         try { return new OperationLock(new FileStream(Path.Combine(directory, name + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)); }
-        catch (IOException e) { throw new IOException("มีงานสำรองหรือกู้คืนกำลังทำงานอยู่ กรุณารอให้เสร็จก่อน", e); }
+        catch (IOException e) when ((e.HResult & 0xffff) is 32 or 33) { return null; }
     }
     public void Dispose() => stream.Dispose();
 }

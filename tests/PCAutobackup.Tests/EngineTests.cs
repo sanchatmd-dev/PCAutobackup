@@ -174,7 +174,7 @@ public sealed class EngineTests : IDisposable
         var interrupted = new BackupEngine(new CancelAfterChunk(new LocalBackupStore(Repo), cts), key);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => interrupted.BackupAsync(config, ct: cts.Token));
         Assert.Equal(first.SnapshotId, Assert.Single(await Engine().ListSnapshotsAsync()).Id);
-        Assert.Single(Directory.GetFiles(Path.Combine(Repo, "chunks")));
+        Assert.Equal(2, Directory.GetFiles(Path.Combine(Repo, "chunks")).Length); // Retain the durable resume checkpoint.
         await Engine().RestoreAsync(first.SnapshotId, Restore);
         Assert.Equal("original", await File.ReadAllTextAsync(Path.Combine(SourceFolder(Restore), "a")));
     }

@@ -27,7 +27,11 @@ try
     var result = arguments.Contains("--scheduled")
         ? await application.BackupScheduledAsync(cancellation.Token)
         : await application.BackupAsync(ct: cancellation.Token);
-    if (result is null) return 0;
+    if (result is null)
+    {
+        if (application.ScheduledSkip is { } skipped) Console.WriteLine(skipped.Message);
+        return 0;
+    }
     Console.WriteLine($"Backup complete: {result.FileCount} files, {result.TotalBytes} bytes. Snapshot {result.SnapshotId}");
     foreach (var warning in result.Warnings) Console.WriteLine("Warning: " + warning);
     return 0;

@@ -180,10 +180,8 @@ public sealed class BackupEngine
         await EnsureOwner(config.DeviceId, previous.Count != 0, ct);
         var trustedChunks = previous.SelectMany(m => m.Chunks).ToHashSet(StringComparer.Ordinal);
         var sourceIds = new HashSet<string>(StringComparer.Ordinal);
-        var staged = new HashSet<string>(StringComparer.Ordinal);
-        bool publicationAttempted = false;
-        try
-        {
+        // Durable content-addressed chunks are the resume checkpoint. Re-read source bytes
+        // on every attempt, and authenticate any chunk not referenced by a prior snapshot.
         var now = timeProvider.GetUtcNow();
         var manifest = new Manifest { Id = now.ToString("yyyyMMddHHmmssfff", System.Globalization.CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N"), CreatedUtc = now, DeviceName = config.DeviceName };
         long count = 0, bytes = 0, uploaded = 0;
@@ -222,11 +220,22 @@ public sealed class BackupEngine
                             {
                                 if (!trustedChunks.Contains(id))
                                 {
-                                    byte[] existing = await ReadChunk(id, ct);
-                                    if (!existing.AsSpan().SequenceEqual(buffer.AsSpan(0, filled))) throw new InvalidDataException("Existing chunk does not match its name.");
+                                    try
+                                    {
+                                        byte[] existing = await ReadChunk(id, ct);
+                                        if (!existing.AsSpan().SequenceEqual(buffer.AsSpan(0, filled))) throw new InvalidDataException("Existing chunk does not match its name.");
+                                    }
+                                    catch (Exception ex) when (ex is CryptographicException or InvalidDataException)
+                                    {
+                                        // This orphan is not referenced by a committed snapshot. Replace a
+                                        // corrupted interrupted upload, preserving all committed chunks.
+                                        await store.DeleteAsync(name, ct);
+                                        byte[] encrypted = Encrypt(buffer.AsSpan(0, filled), "chunk:" + id);
+                                        await Put(name, encrypted, ct); uploaded += encrypted.Length;
+                                    }
                                 }
                             }
-                            else { byte[] encrypted = Encrypt(buffer.AsSpan(0, filled), "chunk:" + id); await Put(name, encrypted, ct); staged.Add(id); uploaded += encrypted.Length; }
+                            else { byte[] encrypted = Encrypt(buffer.AsSpan(0, filled), "chunk:" + id); await Put(name, encrypted, ct); uploaded += encrypted.Length; }
                             entry.Chunks.Add(id); fileBytes += filled;
                         }
                     }
@@ -243,23 +252,12 @@ public sealed class BackupEngine
         byte[] manifestBytes = Encrypt(manifestPlain, "manifest:" + manifest.Id);
         await CheckNewSnapshotQuota(manifest, manifestBytes.Length, config.QuotaBytes, ct);
         ct.ThrowIfCancellationRequested();
-        publicationAttempted = true;
         await Put(ManifestName(manifest.Id), manifestBytes, ct); uploaded += manifestBytes.Length;
         var warnings = new List<string>();
         try { previous.Add(Summarize(manifest)); await Prune(previous, manifest.Id, config.RetentionDays, config.QuotaBytes, warnings, ct); }
         catch (OperationCanceledException) { warnings.Add("Snapshot committed; cleanup was cancelled."); }
         catch (Exception ex) { warnings.Add("Snapshot committed; cleanup failed: " + ex.Message); }
         return new BackupResult(manifest.Id, count, bytes, uploaded, warnings);
-        }
-        finally
-        {
-            if (!publicationAttempted)
-            {
-                var oldReferences = previous.SelectMany(m => m.Chunks).ToHashSet(StringComparer.Ordinal);
-                foreach (string id in staged.Where(id => !oldReferences.Contains(id)))
-                    try { await store.DeleteAsync(ChunkName(id), CancellationToken.None); } catch { /* Leave an orphan for a later cleanup. */ }
-            }
-        }
     }
     private async Task CheckNewSnapshotQuota(Manifest manifest, long manifestBytes, long? quota, CancellationToken ct)
     {

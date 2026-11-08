@@ -143,6 +143,43 @@ public sealed class ScheduleTests : IDisposable
         Assert.Single(await app.ListSnapshotsAsync());
     }
 
+    [Fact]
+    public async Task BusyScheduledAttemptSkipsWithoutChangingActiveRunOrSuccessAndCanRunLater()
+    {
+        var clock = new ManualClock(DateTimeOffset.Parse("2026-11-07T22:00:00+07:00"), Bangkok);
+        var app = await MakeApp(clock);
+        await ConfigurationStore.WriteJsonAtomicAsync(app.ConfigurationPath + ".status.json", new RunStatus { Status = "Running", StartedUtc = clock.Now.AddMinutes(-10) });
+        await ConfigurationStore.WriteJsonAtomicAsync(app.ConfigurationPath + ".success.json", new RunStatus { Status = "Succeeded", StartedUtc = clock.Now.AddDays(-1), SnapshotId = "previous-success" });
+        var paths = new[] { app.ConfigurationPath, app.ConfigurationPath + ".status.json", app.ConfigurationPath + ".success.json" };
+        var before = paths.Select(File.ReadAllBytes).ToArray();
+        using (OperationLock.Acquire(app.ConfigurationPath))
+        {
+            Assert.Null(await app.BackupScheduledAsync());
+            Assert.Equal("Skipped", app.ScheduledSkip?.Status);
+            var skip = await app.GetLastScheduledSkipAsync();
+            Assert.Equal("ข้ามเพราะมีงานกำลังทำอยู่", skip?.Message);
+            Assert.Equal(clock.Now, skip?.StartedUtc);
+            for (var i = 0; i < paths.Length; i++) Assert.Equal(before[i], File.ReadAllBytes(paths[i]));
+            Assert.False(Directory.Exists(app.Configuration.LocalDestinationPath));
+            await Assert.ThrowsAsync<IOException>(() => app.BackupAsync());
+        }
+        Assert.NotNull(await app.BackupScheduledAsync());
+        Assert.Null(app.ScheduledSkip);
+        Assert.Equal("Succeeded", (await app.GetLastRunAsync())?.Status);
+        Assert.Single(await app.ListSnapshotsAsync());
+    }
+
+    [Fact]
+    public void LockPathFailureIsNotMistakenForBusy()
+    {
+        var identity = Path.Combine(root, "broken-lock");
+        var name = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(identity.ToUpperInvariant())));
+        var lockPath = Path.Combine(AppPaths.DataDirectory, "locks", name + ".lock");
+        Directory.CreateDirectory(lockPath);
+        try { Assert.Throws<UnauthorizedAccessException>(() => OperationLock.TryAcquire(identity)); }
+        finally { Directory.Delete(lockPath); }
+    }
+
     private async Task<ApplicationService> MakeApp(ManualClock clock)
     {
         var source = Path.Combine(root, "source"); Directory.CreateDirectory(source);

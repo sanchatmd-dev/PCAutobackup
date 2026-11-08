@@ -111,7 +111,8 @@ public sealed class RetentionQuotaTests : IDisposable
         clock.Now = clock.Now.AddHours(1);
         await File.WriteAllBytesAsync(Path.Combine(Source, "version.bin"), RandomNumberGenerator.GetBytes(8192));
         await Assert.ThrowsAsync<InvalidOperationException>(() => Engine.BackupAsync(config));
-        Assert.Equal(chunkPathsBefore, Directory.GetFiles(Path.Combine(Repo, "chunks")).Order().ToArray());
+        Assert.All(chunkPathsBefore, path => Assert.True(File.Exists(path)));
+        Assert.Equal(chunkPathsBefore.Length + 1, Directory.GetFiles(Path.Combine(Repo, "chunks")).Length); // Resume checkpoint survives quota rejection.
         Assert.Equal(latest.SnapshotId, Assert.Single(await Engine.ListSnapshotsAsync()).Id);
         await AssertRestores(latest.SnapshotId, "restore-after-rejection", ("shared.bin", shared), ("version.bin", newest));
         Assert.Equal(unknownHash, SHA256.HashData(await File.ReadAllBytesAsync(unknown)));

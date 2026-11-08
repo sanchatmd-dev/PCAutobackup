@@ -297,6 +297,118 @@ public sealed class GoogleTests
         Assert.Equal(2, queries); Assert.Equal(0, mutations);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.Gone)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public async Task ExpiredPartialSessionRestartsOnlyCurrentObjectFromItsOriginalStreamOffset(HttpStatusCode expired)
+    {
+        var expected = new byte[1024 * 1024 + 17];
+        Random.Shared.NextBytes(expected);
+        var creates = 0; long received = 0; var committed = false; string? uploadId = null;
+        using var http = new HttpClient(new Handler(async request =>
+        {
+            if (request.Method == HttpMethod.Get)
+                return committed ? Json(new { files = new[] { FileObject("uploaded", "chunks/a", expected.Length, uploadId) } }) : Json(new { files = Array.Empty<object>() });
+            if (request.Method == HttpMethod.Post)
+            {
+                creates++;
+                using var metadata = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+                var id = metadata.RootElement.GetProperty("appProperties").GetProperty("uploadId").GetString();
+                if (uploadId is null) uploadId = id; else Assert.Equal(uploadId, id);
+                received = 0;
+                var response = Json(new { }); response.Headers.Location = new("https://www.googleapis.com/upload/session-" + creates); return response;
+            }
+            Assert.Equal(received, request.Content!.Headers.ContentRange!.From);
+            if (creates == 1 && received > 0) return new(expired);
+            var payload = await request.Content.ReadAsByteArrayAsync();
+            Assert.Equal(expected.AsSpan((int)received, payload.Length).ToArray(), payload);
+            received += payload.Length;
+            if (received == expected.Length) { committed = true; return Json(new { id = "uploaded" }); }
+            var partial = new HttpResponseMessage((HttpStatusCode)308);
+            partial.Headers.TryAddWithoutValidation("Range", $"bytes=0-{received - 1}"); return partial;
+        }));
+        await using var store = new GoogleDriveBackupStore(new GoogleSession(Config(), () => Task.CompletedTask, http), "synthetic-repo");
+        using var content = new MemoryStream(new byte[] { 9, 8, 7 }.Concat(expected).ToArray());
+        content.Position = 3;
+        await store.PutAsync("chunks/a", content);
+        Assert.Equal(2, creates); Assert.True(committed); Assert.Equal(expected.Length, received);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExpiredProbeVerifiesBytesAndReusesOwnObjectWhenRepairIsNeeded(bool storedBytesMatch)
+    {
+        var creates = 0; var payloads = 0; var reads = 0; var complete = false; string? uploadId = null;
+        byte[] expected = [4, 5, 6];
+        using var http = new HttpClient(new Handler(async request =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                if (request.RequestUri!.Query == "?alt=media") { reads++; return new(HttpStatusCode.OK) { Content = new ByteArrayContent(storedBytesMatch ? expected : [9, 9, 9]) }; }
+                return complete ? Json(new { files = new[] { FileObject("uploaded", "chunks/a", 3, uploadId) } }) : Json(new { files = Array.Empty<object>() });
+            }
+            if (request.Method == HttpMethod.Post || request.Method == HttpMethod.Patch)
+            {
+                creates++;
+                if (creates == 2) { Assert.Equal(HttpMethod.Patch, request.Method); Assert.Contains("/uploaded?", request.RequestUri!.AbsoluteUri); }
+                using var metadata = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+                uploadId = metadata.RootElement.GetProperty("appProperties").GetProperty("uploadId").GetString();
+                var response = Json(new { }); response.Headers.Location = new("https://www.googleapis.com/upload/session"); return response;
+            }
+            if (request.Content!.Headers.ContentRange!.From is null) return new(HttpStatusCode.Gone);
+            payloads++; complete = true;
+            if (payloads == 2) return Json(new { id = "uploaded" });
+            throw new HttpRequestException("Synthetic lost final acknowledgement");
+        }));
+        await using var store = new GoogleDriveBackupStore(new GoogleSession(Config(), () => Task.CompletedTask, http), "synthetic-repo");
+        using var content = new MemoryStream(expected);
+        await store.PutAsync("chunks/a", content);
+        Assert.Equal(storedBytesMatch ? 1 : 2, creates); Assert.Equal(storedBytesMatch ? 1 : 2, payloads); Assert.Equal(1, reads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExpiredSessionDoesNotOverwriteAnotherWritersObject(bool overwrite)
+    {
+        var expired = false; var creates = 0;
+        using var http = new HttpClient(new Handler(request =>
+        {
+            if (request.Method == HttpMethod.Get)
+                return Task.FromResult(expired ? Json(new { files = new[] { FileObject("other", "chunks/a", 3, "other-upload") } }) :
+                    overwrite ? Json(new { files = new[] { FileObject("other", "chunks/a", 3, "original-upload") } }) : Json(new { files = Array.Empty<object>() }));
+            if (request.Method == HttpMethod.Post || request.Method == HttpMethod.Patch)
+            {
+                creates++; var response = Json(new { }); response.Headers.Location = new("https://www.googleapis.com/upload/session"); return Task.FromResult(response);
+            }
+            expired = true; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Gone));
+        }));
+        await using var store = new GoogleDriveBackupStore(new GoogleSession(Config(), () => Task.CompletedTask, http), "synthetic-repo");
+        using var content = new MemoryStream(new byte[] { 1, 2, 3 });
+        await Assert.ThrowsAsync<IOException>(() => store.PutAsync("chunks/a", content, overwrite: overwrite));
+        Assert.Equal(1, creates);
+    }
+
+    [Fact]
+    public async Task RepeatedSessionExpirationHasBoundedRestarts()
+    {
+        var creates = 0;
+        using var http = new HttpClient(new Handler(request =>
+        {
+            if (request.Method == HttpMethod.Get) return Task.FromResult(Json(new { files = Array.Empty<object>() }));
+            if (request.Method == HttpMethod.Post)
+            {
+                creates++; var response = Json(new { }); response.Headers.Location = new("https://www.googleapis.com/upload/session"); return Task.FromResult(response);
+            }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Gone));
+        }));
+        await using var store = new GoogleDriveBackupStore(new GoogleSession(Config(), () => Task.CompletedTask, http), "synthetic-repo");
+        using var content = new MemoryStream(new byte[] { 1 });
+        await Assert.ThrowsAsync<IOException>(() => store.PutAsync("chunks/a", content));
+        Assert.Equal(3, creates);
+    }
+
     private static AppConfiguration Config() => new()
     {
         GoogleClientId = "synthetic-client", GoogleClientSecret = "synthetic-secret",

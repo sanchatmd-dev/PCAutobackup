@@ -102,6 +102,9 @@ public partial class MainWindow : Window
 
     private async Task RefreshRunHistoryAsync()
     {
+        var skipped = await _service.GetLastScheduledSkipAsync();
+        ScheduledSkipText.Text = skipped is null ? "" : F("รอบอัตโนมัติที่ข้ามล่าสุด · {0} · {1}", T("ข้ามเพราะมีงานกำลังทำอยู่"), LocalDate(skipped.StartedUtc));
+        ScheduledSkipText.Visibility = skipped is null ? Visibility.Collapsed : Visibility.Visible;
         var success = await _service.GetLastSuccessAsync();
         LastBackupText.Text = success is null ? T("ยังไม่มีข้อมูลการสำรองสำเร็จ") : F("สำรองสำเร็จล่าสุด {0} · {1:N0} ไฟล์ · {2}", LocalDate(success.CompletedUtc ?? success.StartedUtc), success.FilesProcessed, FormatBytes(success.BytesProcessed));
         var latest = await _service.GetLastRunAsync();

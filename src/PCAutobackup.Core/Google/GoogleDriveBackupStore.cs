@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -99,6 +100,46 @@ public sealed class GoogleDriveBackupStore : IBackupStore
         var start = content.Position;
         var length = content.Length - start;
         var receipt = new UploadReceipt(Guid.NewGuid().ToString("N"), length);
+        for (var restart = 0; ; restart++)
+        {
+            content.Position = start;
+            try { return await UploadSessionAsync(name, existing, content, receipt, ct); }
+            catch (UploadSessionExpiredException)
+            {
+                // A lost final acknowledgement can leave a completed object. Reconcile before
+                // creating another session, and never overwrite a different writer's object.
+                var found = await FindAsync(name, ct, fresh: true);
+                if (found is not null)
+                {
+                    var ours = found.Properties.GetValueOrDefault("uploadId") == receipt.UploadId;
+                    var unchangedOriginal = existing is not null && found.Id == existing.Id &&
+                        found.Properties.GetValueOrDefault("uploadId") == existing.Properties.GetValueOrDefault("uploadId") &&
+                        found.Size == existing.Size && found.ModifiedUtc == existing.ModifiedUtc;
+                    if (!ours && !unchangedOriginal)
+                        throw new IOException("พบวัตถุจากงานอื่นระหว่างเริ่มอัปโหลดใหม่ หยุดเพื่อป้องกันข้อมูลซ้ำ");
+                    if (ours && found.Size == length)
+                    {
+                        content.Position = start;
+                        var expectedHash = await SHA256.HashDataAsync(content, ct);
+                        await using var stored = await OpenReadAsync(name, ct);
+                        var actualHash = await SHA256.HashDataAsync(stored, ct);
+                        if (CryptographicOperations.FixedTimeEquals(expectedHash, actualHash)) return receipt;
+                    }
+                    // Reuse this upload's placeholder (or the explicitly overwritten ID).
+                    existing = found;
+                }
+                if (restart >= 2) throw new IOException("Google Drive upload session ใช้งานไม่ได้หลังเริ่มใหม่ครบจำนวนครั้งแล้ว");
+                await Task.Delay(TimeSpan.FromSeconds(1 << restart), ct);
+            }
+        }
+    }
+
+    private sealed class UploadSessionExpiredException : IOException { }
+
+    private async Task<UploadReceipt> UploadSessionAsync(string name, DriveFile? existing, Stream content, UploadReceipt receipt, CancellationToken ct)
+    {
+        var start = content.Position;
+        var length = receipt.Length;
         var metadata = new Dictionary<string, object> { ["name"] = EncodeName(name), ["mimeType"] = "application/octet-stream", ["appProperties"] = new Dictionary<string, string> { ["pcabRole"] = ObjectRole, ["uploadId"] = receipt.UploadId } };
         if (existing is null) metadata["parents"] = new[] { folderId };
         var bytes = JsonSerializer.SerializeToUtf8Bytes(metadata);
@@ -155,6 +196,8 @@ public sealed class GoogleDriveBackupStore : IBackupStore
             }
             using (response)
             {
+                if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
+                    throw new UploadSessionExpiredException();
                 if ((int)response.StatusCode == 308)
                 {
                     var next = GetAcknowledgedOffset(response);
