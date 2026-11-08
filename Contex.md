@@ -1,5 +1,21 @@
 # Project context — PC AutoBackup
 
+เตรียมเผยแพร่ `v2026.11.09-persistent-undo` รวมแก้ปุ่มนำออกไทย/อังกฤษ, ประวัติ Undo ถาวร, ยืนยันนำออก, คืนโฟลเดอร์ทั้งหมด, ล้างประวัติพร้อมคำยืนยัน และแถบซ่อนหลัง60วินาที ตัวติดตั้งไฟล์เดียวชื่อ PCAutobackup-win-x64.exe พร้อมคู่มือ HTML และ SHA256SUMS.txt คง16/16และเวลา21:00 หลักฐานทดสอบหน้าต่างจริงอยู่ในรายงาน persistent-source-ui-verification-2026-11-09.md บันทึกก่อนหน้านี้ที่ระบุว่ายังไม่เผยแพร่เป็นสถานะ ณ เวลาตรวจครั้งนั้น
+
+ติดตั้ง persistent Undo รุ่นล่าสุดในเครื่องและทดสอบหน้าจอจริงครบแล้ว (9 พฤศจิกายน 2026): Undo, Confirm, Restore folders, Clear No/Yes, ซ่อนแถบหลังรอจริงเกิน60s และประวัติอยู่หลังเปิดใหม่ผ่าน เทียบ installed payload815/815 และไฟล์จำลอง SHA2/2 ตรง configurationจริง/startupเดิม ตารางdaily21:00เดิม แต่installerrefresh StartBoundaryเป็นวันที่9ตามวันติดตั้ง คง16/16 Core5477718DEF48011932DC2915770FF5ADE1303A95713E073BD08BD0991B4181F3 ดู [รายงาน](docs/persistent-source-ui-verification-2026-11-09.md) ยังไม่commit/pushหรือReleaseใหม่ ข้อความสถานะก่อนติดตั้งด้านล่างเป็นประวัติ
+
+## ปรับ Undo แบบถาวร — 9 พฤศจิกายน 2026
+
+แทนที่พฤติกรรม session-only ด้านล่างด้วย `PendingSourceRemovals` ใน AppConfiguration บันทึกพร้อม Sources แบบ atomic และใช้ Revision ป้องกัน stale writer รายการมี Source, OriginalIndex และ RemovedUtc ไม่มีการตัดประวัติอัตโนมัติที่ 20 รายการ การปิด/รีเฟรชไม่ล้างประวัติ แถบ Undo/ยืนยันนำออกซ่อนหลัง 60 วินาทีโดยใช้ timer เฉพาะช่วงที่จำเป็นและหยุดเมื่อหมดเวลา ยืนยันนำออกลบรายการล่าสุดจากประวัติ; คืนโฟลเดอร์คืนทั้งหมดแบบย้อนลำดับและคงรายการที่มี ID/path ซ้ำ; ล้างประวัติต้องตอบ Yes ใน dialog (default No) ทุก mutation rollback เมื่อ save ล้มเหลว ไม่เปลี่ยน concurrency 16/16 หรือเวลา 21:00 การแก้รอบนี้ยังไม่ได้ติดตั้งทับแอปที่เปิดอยู่หรือเผยแพร่ Release
+
+## สถานะล่าสุด: ปุ่มนำออกและ Undo
+
+แก้ข้อความ `System.Windows.ResourceReferenceExpression` ในปุ่มนำออกของ Sources DataTemplate โดยใช้ DynamicResource โดยตรง และเลื่อนการ resolve ของ `LocalizeExtension` จนมี DependencyObject จริง พร้อมแก้ return-type metadata เป็น object ชื่อปุ่มเปลี่ยนตามภาษาเป็น นำออก / Remove ได้ทันที
+
+เพิ่ม `SourceRemovalUndoHistory` แบบ session-only จำกัด 20 รายการ เก็บสำเนา BackupSource พร้อมตำแหน่งเดิม บันทึกประวัติหลัง save สำเร็จเท่านั้น Undo คืน ID/path/label/order และ pop หลัง save สำเร็จ มี rollback เมื่อ save ล้มเหลว และป้องกัน ID/path ซ้ำ ประวัติอยู่ข้ามการสลับภาษา แต่ล้างเมื่อรีเฟรช configuration หรือปิด UI ไม่มี timer หรือการสำเนาเนื้อหาไฟล์
+
+Release build ผ่าน 0 warnings/errors และ 186 tests ผ่าน ทดสอบ compiled ItemsControl ก่อนแก้พบ ResourceReferenceExpression จริง หลังแก้เป็น string ไทย→อังกฤษ→ไทย ทดสอบ WPF จริงด้วยสองโฟลเดอร์จำลอง Remove/Undo และสลับภาษาระหว่างรอ Undo ผ่าน SHA-256/ขนาดไฟล์จำลองคงเดิม 2/2 และการตั้งค่าทดสอบกลับครบทุก field ยกเว้น Revision ติดตั้ง candidate ในเครื่องแล้ว เทียบ payload 814 ไฟล์ตรงทั้งหมด Core SHA-256 `B088C52946F8B46E379AB8911CAB6734CE4217673F44EE6BBA3C842CE87C7587` การตั้งค่าจริง/startup/task XML คงเดิม คง 16/16 และทุกวัน 21:00 ยังไม่ได้ commit/push หรือสร้าง Release ใหม่ ดู [รายงาน](docs/localization-undo-verification-2026-11-08.md) ส่วนบันทึกด้านล่างเป็นประวัติตามช่วงพัฒนา
+
 งานทดลองหลังรุ่น Resume: `BackupEngine` เพิ่ม constructor parameter `maxConcurrentChunks` (1–2, default 1) พร้อม buffer reuse, dedupe ภายในรอบ, ยกเลิกและรอทุกงานก่อนออกเมื่อเกิดข้อผิดพลาด และรักษาสาเหตุผิดพลาดเดิม ส่วน internal `GoogleDriveBackupStore` เพิ่ม `optimizeChunkUploads=false`, `maxConcurrentMutations=1`; เปิดสองตัวเลือกเฉพาะ benchmark เพื่อส่ง chunk ไม่เกิน 4 MiB+32 ใน request เดียวและทำสอง chunk mutations พร้อมกัน ใช้ name-lock แบบ bounded stripes, delete/manifest mutation เป็น exclusive และคง fresh conflict checks ก่อน/หลัง upload ค่าใช้จริงของแอปยังไม่เปิดตัวเลือกนี้ ไม่มีการติดตั้ง/เปลี่ยน production หรือตาราง 21:00 ในงานทดลอง ชุดทดสอบผ่าน 118 tests และ build solution ผ่าน 0 warnings/errors; benchmark ใช้ไฟล์จำลองแยกคลังและเทียบ ABBA พร้อมกู้คืนด้วย Core รุ่นเดิม
 
 เอกสารนี้ชื่อ `Contex.md` ตามที่ผู้ใช้ร้องขอ ใช้ส่งต่อบริบทระหว่างงานพัฒนา อัปเดตเมื่อพฤติกรรมจริงเปลี่ยน

@@ -15,6 +15,8 @@ public partial class MainWindow : Window
 {
     private readonly ApplicationService _service;
     private readonly IdleTransferMemoryCleanup _idleMemoryCleanup = new();
+    private SourceRemovalUndoHistory SourceUndoHistory => new(_service.Configuration);
+    private System.Windows.Threading.DispatcherTimer? _sourceUndoTimer;
     private CancellationTokenSource? _jobCancellation;
     private bool _acceptProgress;
     private readonly Stopwatch _jobElapsed = new();
@@ -170,6 +172,7 @@ public partial class MainWindow : Window
         SourcesList.ItemsSource = null;
         SourcesList.ItemsSource = config.Sources;
         EmptySources.Visibility = config.Sources.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateSourceUndoNotice();
         ScheduleText.Text = !config.ScheduleEnabled ? T("ยังไม่เปิด") : times.Count == 1 ? times[0] : F("{0} รอบ / วัน", times.Count);
         ScheduleCaption.Text = config.ScheduleEnabled ? string.Join(", ", times) + T(" · เวลาของ Windows") : T("ตั้งเวลาได้ในการตั้งค่า");
         RetentionText.Text = config.RetentionDays == 0 ? T("ชุดล่าสุด") : F("{0:N0} วัน", config.RetentionDays);
@@ -238,10 +241,88 @@ public partial class MainWindow : Window
         var id = (string)((Button)sender).Tag;
         await RunJobAsync(T("กำลังบันทึกโฟลเดอร์…"), async ct =>
         {
-            _service.Configuration.Sources.RemoveAll(source => source.Id == id);
-            await _service.SaveConfigurationAsync();
+            if (!await SourceUndoHistory.RemoveAsync(id, _service.SaveConfigurationAsync, DateTimeOffset.UtcNow)) return;
             PopulateConfiguration();
             StatusText.Text = T("นำโฟลเดอร์ออกจากการสำรองแล้ว · ไฟล์ต้นฉบับยังอยู่ตามเดิม");
+        });
+    }
+
+    private async void UndoRemoveSource_Click(object sender, RoutedEventArgs e)
+    {
+        await RunJobAsync(T("กำลังคืนโฟลเดอร์…"), async ct =>
+        {
+            if (!await SourceUndoHistory.UndoLatestAsync(_service.SaveConfigurationAsync))
+            {
+                UpdateSourceUndoNotice();
+                StatusText.Text = T("เลิกทำไม่ได้ เพราะมีโฟลเดอร์หรือรหัสเดียวกันอยู่แล้ว");
+                return;
+            }
+            PopulateConfiguration();
+            StatusText.Text = T("คืนโฟลเดอร์เข้าสู่รายการสำรองแล้ว");
+        });
+    }
+
+    private void UpdateSourceUndoNotice()
+    {
+        _sourceUndoTimer?.Stop();
+        var history = SourceUndoHistory;
+        SourceHistoryPanel.Visibility = history.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        SourceHistoryText.Text = F("มีโฟลเดอร์ที่นำออกและยังไม่ยืนยัน {0:N0} รายการ", history.Count);
+        var entry = history.Peek();
+        var remaining = history.BannerRemaining(DateTimeOffset.UtcNow);
+        SourceUndoPanel.Visibility = remaining > TimeSpan.Zero ? Visibility.Visible : Visibility.Collapsed;
+        if (entry is null || remaining <= TimeSpan.Zero) return;
+        var canRestore = history.CanRestore(_service.Configuration.Sources);
+        UndoSourceButton.IsEnabled = canRestore;
+        SourceUndoNotice.Text = F("นำโฟลเดอร์ออกแล้ว: {0}", entry.Source.Path)
+            + (canRestore ? "" : " · " + T("เลิกทำไม่ได้ เพราะมีโฟลเดอร์หรือรหัสเดียวกันอยู่แล้ว"));
+        if (_sourceUndoTimer is null)
+        {
+            _sourceUndoTimer = new System.Windows.Threading.DispatcherTimer();
+            _sourceUndoTimer.Tick += SourceUndoTimer_Tick;
+        }
+        _sourceUndoTimer.Interval = remaining;
+        _sourceUndoTimer.Start();
+    }
+
+    private void SourceUndoTimer_Tick(object? sender, EventArgs e)
+    {
+        _sourceUndoTimer?.Stop();
+        UpdateSourceUndoNotice();
+    }
+
+    private async void ConfirmSourceRemoval_Click(object sender, RoutedEventArgs e)
+    {
+        await RunJobAsync(T("กำลังบันทึกโฟลเดอร์…"), async ct =>
+        {
+            await SourceUndoHistory.ConfirmLatestAsync(_service.SaveConfigurationAsync);
+            PopulateConfiguration();
+            StatusText.Text = T("ยืนยันการนำโฟลเดอร์ออกแล้ว · ไฟล์ต้นฉบับยังอยู่ตามเดิม");
+        });
+    }
+
+    private async void RestoreRemovedSources_Click(object sender, RoutedEventArgs e)
+    {
+        await RunJobAsync(T("กำลังคืนโฟลเดอร์…"), async ct =>
+        {
+            var result = await SourceUndoHistory.RestoreAllAsync(_service.SaveConfigurationAsync);
+            PopulateConfiguration();
+            StatusText.Text = F("คืนโฟลเดอร์แล้ว {0:N0} รายการ · ยังมีรายการซ้ำที่ไม่ได้คืน {1:N0} รายการ", result.RestoredCount, result.ConflictCount);
+        });
+    }
+
+    private async void ClearSourceRemovalHistory_Click(object sender, RoutedEventArgs e)
+    {
+        if (_jobCancellation is not null || SourceUndoHistory.Count == 0) return;
+        var confirmed = MessageBox.Show(this,
+            T("ล้างประวัติการนำโฟลเดอร์ออกทั้งหมดหรือไม่?\n\nรายการที่นำออกจะยังไม่ถูกสำรอง และจะเลิกทำจากประวัตินี้ไม่ได้ ไฟล์ต้นฉบับและรายการโฟลเดอร์ที่ยังใช้งานจะไม่ถูกลบ"),
+            T("ล้างประวัติ"), MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
+        if (!confirmed) return;
+        await RunJobAsync(T("กำลังบันทึกโฟลเดอร์…"), async ct =>
+        {
+            await SourceUndoHistory.ClearAsync(confirmed, _service.SaveConfigurationAsync);
+            PopulateConfiguration();
+            StatusText.Text = T("ล้างประวัติการนำโฟลเดอร์ออกแล้ว");
         });
     }
 
@@ -610,6 +691,7 @@ public partial class MainWindow : Window
 
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
+        _sourceUndoTimer?.Stop();
         if (_jobCancellation is null) return;
         e.Cancel = true;
         _closeAfterJob = true;

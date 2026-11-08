@@ -1,5 +1,17 @@
 # Validation — 2026-11-07
 
+## Installed persistent source controls — 9 November 2026
+
+[Actual installed WPF verification](persistent-source-ui-verification-2026-11-09.md): installed payload SHA-256 815/815 matched. Synthetic UI Undo, Confirm removal, Restore folders and Clear history No/Yes passed. Real wait exceeded 60 seconds; banner hid while pending history remained. Closed and reopened installed executable with the same isolated configuration; history survived and restore returned only the unconfirmed source. Original synthetic file SHA/size unchanged 2/2. Main configuration/startup unchanged, daily21:00 enabled and 16/16 retained. Task XML changed only daily StartBoundary date after installer refreshed it on a new day. No new transfer or memory comparison; full suite196 had passed before installation. No commit/push or Release update.
+
+## Persistent source-removal history — 9 November 2026
+
+Release solution build passed with zero warnings/errors; full suite passed 196/196. Synthetic tests cover persistent unconfirmed removals across configuration reload, more than twenty entries without eviction, original order and identity, restore-all with duplicate conflicts retained, confirmation of the latest removal, declined/confirmed history clearing, rollback on failed saves for all five operations, 60-second banner expiry without losing history, legacy/null history migration and stale configuration revision rejection. UI adds translated Confirm removal, Restore folders and Clear history controls; the clear action defaults to No in its confirmation dialog. The banner timer stops on expiry/close; history persists in configuration with the active source list. No new actual-window interaction test was performed in this change. User configuration SHA-256 and scheduled-task XML remained unchanged, next run 9 November 2026 at 21:00 +07:00; production concurrency remains 16/16. Source and Release build are updated; the running installed app and GitHub Release have not been replaced in this task.
+
+## Localized source removal and Undo — 8 November 2026
+
+[Thai verification report](localization-undo-verification-2026-11-08.md): Release build zero warnings/errors and 186 tests passed. Realized compiled Sources ItemsControl reproduced the old ResourceReferenceExpression bug; candidate rendered Thai/English/Thai strings correctly. Actual WPF synthetic Remove/Undo, including language switch between removal and undo, restored both sources with IDs/labels/paths/order intact. Synthetic original file SHA-256 and size unchanged 2/2; fixture configuration unchanged except Revision. Installed candidate matches all 814 expected published files. Main configuration hash, startup value and scheduler XML unchanged; production 16/16 and enabled daily 21:00 retained. Session-only undo holds at most 20 removals and does not copy file contents. Idle installed Tray sample: working set 37.40 MB, private 9.57 MB; one sample, not a memory guarantee. No actual user backup/prune/restore or GitHub publication in this task.
+
 Environment: Windows 11 Home Single Language x64 (10.0.26200), .NET SDK 10.0.403. Release configuration, self-contained win-x64 package.
 
 ## Automated checks

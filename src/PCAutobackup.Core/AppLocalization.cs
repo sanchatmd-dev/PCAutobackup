@@ -86,7 +86,24 @@ public static class AppLocalization
     {
         using var stream = typeof(AppLocalization).Assembly.GetManifestResourceStream("PCAutobackup.Core.Localization.English.json")
             ?? throw new InvalidOperationException("Missing embedded translation catalog.");
-        return JsonSerializer.Deserialize<Dictionary<string, string>>(stream)
+        var translations = JsonSerializer.Deserialize<Dictionary<string, string>>(stream)
             ?? throw new InvalidOperationException("Invalid embedded translation catalog.");
+        translations["เลิกทำ"] = "Undo";
+        translations["เลิกทำการนำโฟลเดอร์ออก"] = "Undo folder removal";
+        translations["นำโฟลเดอร์ออกแล้ว: {0}"] = "Folder removed: {0}";
+        translations["เลิกทำไม่ได้ เพราะมีโฟลเดอร์หรือรหัสเดียวกันอยู่แล้ว"] = "Cannot undo: a folder with the same path or ID already exists";
+        translations["คืนโฟลเดอร์เข้าสู่รายการสำรองแล้ว"] = "Folder restored to the backup list";
+        translations["กำลังคืนโฟลเดอร์…"] = "Restoring folder selection…";
+        translations["ยืนยันการนำออก"] = "Confirm removal";
+        translations["ยืนยันการนำโฟลเดอร์ออกแล้ว · ไฟล์ต้นฉบับยังอยู่ตามเดิม"] = "Folder removal confirmed · Original files remain unchanged";
+        translations["คืนโฟลเดอร์"] = "Restore folders";
+        translations["คืนโฟลเดอร์ที่นำออกแต่ยังไม่ยืนยันสู่รายการสำรอง"] = "Restore all unconfirmed removals to the backup list";
+        translations["ล้างประวัติ"] = "Clear history";
+        translations["มีโฟลเดอร์ที่นำออกและยังไม่ยืนยัน {0:N0} รายการ"] = "{0:N0} unconfirmed folder removals";
+        translations["คืนโฟลเดอร์แล้ว {0:N0} รายการ · ยังมีรายการซ้ำที่ไม่ได้คืน {1:N0} รายการ"] = "Restored {0:N0} folders · {1:N0} conflicting entries remain pending";
+        translations["ล้างประวัติการนำโฟลเดอร์ออกแล้ว"] = "Folder removal history cleared";
+        translations["ล้างประวัติการนำโฟลเดอร์ออกทั้งหมดหรือไม่?\n\nรายการที่นำออกจะยังไม่ถูกสำรอง และจะเลิกทำจากประวัตินี้ไม่ได้ ไฟล์ต้นฉบับและรายการโฟลเดอร์ที่ยังใช้งานจะไม่ถูกลบ"] = "Clear all folder removal history?\n\nRemoved folders will remain excluded from backup and cannot be restored from this history. Original files and active source folders will not be deleted.";
+        translations["รายการโฟลเดอร์ที่นำออกไม่ถูกต้อง"] = "Invalid removed folder history";
+        return translations;
     }
 }

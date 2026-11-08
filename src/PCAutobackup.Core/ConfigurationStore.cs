@@ -22,6 +22,7 @@ public static class ConfigurationStore
             ?? throw new InvalidDataException("ไฟล์ตั้งค่าว่างหรือไม่ถูกต้อง");
         if (config.Version != 1) throw new InvalidDataException("เวอร์ชันไฟล์ตั้งค่านี้ยังไม่รองรับ");
         config.Language = AppLocalization.NormalizeLanguage(config.Language);
+        config.PendingSourceRemovals ??= [];
         return config;
     }
 
@@ -41,6 +42,12 @@ public static class ConfigurationStore
         if (!Guid.TryParseExact(config.DeviceId, "N", out _)) throw new ArgumentException("รหัสเครื่องไม่ถูกต้อง");
         if (!Enum.IsDefined(config.Destination)) throw new ArgumentException("ปลายทางไม่ถูกต้อง");
         if (config.Sources is null) throw new ArgumentException("รายการโฟลเดอร์ไม่ถูกต้อง");
+        if (config.PendingSourceRemovals is null) throw new ArgumentException("รายการโฟลเดอร์ที่นำออกไม่ถูกต้อง");
+        foreach (var entry in config.PendingSourceRemovals)
+        {
+            if (entry is null || entry.Source is null || entry.OriginalIndex < 0 || string.IsNullOrWhiteSpace(entry.Source.Id)
+                || !Path.IsPathFullyQualified(entry.Source.Path)) throw new ArgumentException("รายการโฟลเดอร์ที่นำออกไม่ถูกต้อง");
+        }
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var source in config.Sources)
         {

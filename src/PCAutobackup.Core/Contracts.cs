@@ -13,6 +13,7 @@ public sealed class AppConfiguration
     public string LocalDestinationPath { get; set; } = "";
     public string? ExternalVolumeId { get; set; }
     public List<BackupSource> Sources { get; set; } = [];
+    public List<SourceRemovalUndoEntry> PendingSourceRemovals { get; set; } = [];
     public int RetentionDays { get; set; } = 7;
     public long? QuotaBytes { get; set; }
     public string DailyTime { get; set; } = "21:00";

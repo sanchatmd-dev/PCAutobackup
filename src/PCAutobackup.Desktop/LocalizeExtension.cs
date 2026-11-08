@@ -4,11 +4,16 @@ using System.Windows.Markup;
 namespace PCAutobackup.Desktop;
 
 /// <summary>Uses dynamic resources so labels, templates and accessibility names update without recreating controls.</summary>
-[MarkupExtensionReturnType(typeof(string))]
+[MarkupExtensionReturnType(typeof(object))]
 public sealed class LocalizeExtension(string text) : MarkupExtension
 {
     public static string ResourceKey(string text) => "Localized:" + text;
 
-    public override object ProvideValue(IServiceProvider serviceProvider) =>
-        new DynamicResourceExtension(ResourceKey(text)).ProvideValue(serviceProvider);
+    public override object ProvideValue(IServiceProvider serviceProvider)
+    {
+        var target = serviceProvider.GetService(typeof(IProvideValueTarget)) as IProvideValueTarget;
+        // Templates first probe extensions before their controls exist. Resolve only for the real target.
+        if (target?.TargetObject is not DependencyObject) return this;
+        return new DynamicResourceExtension(ResourceKey(text)).ProvideValue(serviceProvider);
+    }
 }

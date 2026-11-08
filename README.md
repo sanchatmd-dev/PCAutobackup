@@ -98,6 +98,10 @@ Google OAuth project ที่อยู่ในสถานะ External/Testing
 
 การตั้งค่าเก่าที่มีเวลาเดียวจะรักษาเวลานั้นไว้ เมื่อแก้เวลาผ่านหน้าตั้งค่า ระบบจะบันทึกรายการหลายเวลาให้ใหม่ ตัวเลือกหลายโฟลเดอร์มีอยู่ที่ **โฟลเดอร์ต้นทาง → เพิ่มโฟลเดอร์** เลือกหลายโฟลเดอร์ใน dialog หรือเพิ่มทีละโฟลเดอร์ได้
 
+ปุ่ม **นำออก / Remove** นำโฟลเดอร์ออกจากรายการสำรองทันที แต่ไม่ลบไฟล์ต้นฉบับ หลังนำออกจะมี **เลิกทำ / Undo** และ **ยืนยันนำออก / Confirm removal** คู่กัน เลิกทำคืนรายการพร้อมรหัส ชื่อ และลำดับเดิม ส่วนยืนยันนำออกลบประวัติของรายการนั้น ทำให้คืนผ่านประวัติไม่ได้ แถบนี้ซ่อนเมื่อครบ 1 นาที แต่รายการที่ยังไม่ยืนยันยังเก็บอยู่ในไฟล์การตั้งค่าข้ามการปิดแอปและรีเฟรช ไม่มีการล้างรายการเก่าอัตโนมัติเมื่อเกิน 20 รายการ
+
+ปุ่ม **คืนโฟลเดอร์ / Restore folders** คืนทุกรายการที่ยังไม่ได้ยืนยันนำออก หากมี ID หรือพาธซ้ำจะเก็บรายการที่คืนไม่ได้ไว้ในประวัติ ปุ่ม **ล้างประวัติ / Clear history** ถามยืนยันก่อนล้างประวัติทั้งหมด โดยไม่คืนโฟลเดอร์และไม่ลบไฟล์ต้นฉบับ ประวัตินี้คืนเฉพาะรายการโฟลเดอร์ ไม่คืนเวอร์ชันสำรองที่ retention ล้างแล้ว
+
 อ้างอิง Windows: [StartWhenAvailable](https://learn.microsoft.com/en-us/windows/win32/taskschd/tasksettings-startwhenavailable), [session-state triggers](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-sessionstatechangetrigger-triggergroup-element), [event triggers](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-eventtrigger-triggergroup-element)
 
 ## ข้อจำกัดที่ควรเข้าใจก่อนใช้
