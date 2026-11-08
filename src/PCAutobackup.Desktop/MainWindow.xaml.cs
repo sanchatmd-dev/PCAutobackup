@@ -14,6 +14,7 @@ namespace PCAutobackup.Desktop;
 public partial class MainWindow : Window
 {
     private readonly ApplicationService _service;
+    private readonly IdleTransferMemoryCleanup _idleMemoryCleanup = new();
     private CancellationTokenSource? _jobCancellation;
     private bool _acceptProgress;
     private readonly Stopwatch _jobElapsed = new();
@@ -399,7 +400,7 @@ public partial class MainWindow : Window
             LastBackupText.Text = F("สำรองสำเร็จล่าสุด {0} · {1:N0} ไฟล์ · {2}", LocalDate(DateTimeOffset.Now), result.FileCount, FormatBytes(result.TotalBytes));
             StatusText.Text = F("สำรองสำเร็จ · {0:N0} ไฟล์ · ส่งข้อมูล {1}", result.FileCount, FormatBytes(result.UploadedBytes));
             ShowWarnings(result.Warnings);
-        });
+        }, releaseTransferMemory: true);
     }
 
     private async void RefreshSnapshots_Click(object sender, RoutedEventArgs e) => await RunJobAsync(T("กำลังอ่านคลังสำรอง…"), ct => LoadSnapshotsAsync(ct));
@@ -471,7 +472,7 @@ public partial class MainWindow : Window
             CompleteTransferProgress(result.BytesRestored);
             StatusText.Text = F("กู้คืนสำเร็จ · {0:N0} ไฟล์ · {1}", result.FilesRestored, FormatBytes(result.BytesRestored));
             ShowWarnings(result.Warnings);
-        });
+        }, releaseTransferMemory: true);
     }
 
     private IProgress<BackupProgress> CreateProgress()
@@ -517,13 +518,12 @@ public partial class MainWindow : Window
         _ => T("กำลังทำงาน · ") + stage
     };
 
-    private async Task RunJobAsync(string initialStatus, Func<CancellationToken, Task> work)
+    private async Task RunJobAsync(string initialStatus, Func<CancellationToken, Task> work, bool releaseTransferMemory = false)
     {
         if (_jobCancellation is not null) return;
         _jobCancellation = new CancellationTokenSource();
         _acceptProgress = true;
         _transferCompleted = false;
-        _jobElapsed.Restart();
         ReloadConfigurationButton.IsEnabled = false;
         MainContent.IsEnabled = false;
         JobProgress.Visibility = Visibility.Visible;
@@ -538,6 +538,8 @@ public partial class MainWindow : Window
         StatusText.Text = initialStatus;
         try
         {
+            await _idleMemoryCleanup.BeginJobAsync();
+            _jobElapsed.Restart();
             await work(_jobCancellation.Token);
         }
         catch (OperationCanceledException)
@@ -579,8 +581,23 @@ public partial class MainWindow : Window
             ProgressMetricsText.Visibility = _transferCompleted ? Visibility.Visible : Visibility.Collapsed;
             ProgressDetailText.Visibility = Visibility.Collapsed;
             CancelButton.Visibility = Visibility.Collapsed;
+            var completedGeneration = _idleMemoryCleanup.CompleteJob();
+            if (releaseTransferMemory && !_closeAfterJob) QueueTransferMemoryCleanup(completedGeneration);
             if (_closeAfterJob) Close();
         }
+    }
+
+    private void QueueTransferMemoryCleanup(long completedGeneration)
+    {
+        // This separate boundary captures only the window and generation, never RunJobAsync's work delegate.
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle,
+            new Action(() => _ = ReclaimIdleTransferMemoryAsync(completedGeneration)));
+    }
+
+    private async Task ReclaimIdleTransferMemoryAsync(long completedGeneration)
+    {
+        try { await _idleMemoryCleanup.ReclaimWhenIdleAsync(completedGeneration); }
+        catch (Exception ex) { Trace.TraceWarning("Idle managed-memory cleanup failed: {0}", ex.GetType().Name); }
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e)

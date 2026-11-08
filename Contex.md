@@ -156,3 +156,7 @@ Progress featureติดตั้งในเครื่องแล้ว Cor
 ทดสอบReleaseprogressEXEติดตั้งทับexit0และactualWPF localrandom2GiB3files สำรอง/กู้คืนสำเร็จ SHA3/3 generation/source/restoredตรง UIระหว่างงานเห็น%/MBs/ETAและจบ100%ETA0 ค่าปัดเศษสอดคล้อง RAMactualDesktop sampledpeakWS260.14/566.29MB, processpeak626.27ตอนrestore(ใช้processเดียวกัน) config/startup/SchedulerXMLเดิม16/16เวลา21:00 ดูdocs/progress-installer-verification-2026-11-08.md ไม่ได้commit/pushในงานนี้
 
 ตรวจactualWPF GoogleDriveprogress512MiB3filesผ่าน SHA3/3 เห็น77%13.74MB/sETA10และจบ100%ETA0 คืนจากDriveสำเร็จด้วย เปิดUIหลังพักRAMลดแต่privateไม่กลับbaseline(ก่อน71.57MB หลังbackup77s248.32/restore85s157.30) ปิดUIprocessออกเหลือmainTrayprivate8.63MBเท่าก่อน WS1.38MB ไม่บังคับGC/trim คงconfig/taskXML16/16เวลา21:00 ดูdocs/drive-progress-idle-verification-2026-11-08.md
+
+แก้idleRAM: Coreclearbufferrefsหลังdrain; Desktopone-timebackgroundAggressiveGC+LOHcompactionหลังApplicationIdle ไม่trimworking-set/no timer มีgenerationgateกับjobstart ทดสอบ182ผ่าน actualWPF A/BlocalSHA3/3ทั้งคู่ Drivepairedpost60private104.40→83.76MB WS163.89→127.18MB; localmixedWSสูงขึ้น ต้องอ่านข้อจำกัด Candidateติดตั้งในเครื่องCore4FB3112BDC97C96757C98201601A6D32C110E46DB54CC323587A5CC47D0D78C2 config/taskXMLเดิมคง16/16เวลา21:00 ดูdocs/idle-memory-fix-verification-2026-11-08.md ยังไม่commit/push
+
+เตรียมRelease v2026.11.08-idle-ram พร้อมตัวติดตั้งไฟล์เดียวและคู่มือHTML รุ่นนี้คงprogress%,processedMB/s,ETAและ16/16เวลา21:00 แต่เพิ่มคืนmanagedmemoryหลังงาน มีข้อจำกัดการวัดRAMก่อน–หลังตามรายงาน

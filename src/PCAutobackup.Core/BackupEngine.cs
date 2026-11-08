@@ -309,23 +309,27 @@ public sealed class BackupEngine
                                 while (pendingChunks.Values.Any(value => value.Task.IsCompleted)) await DrainOne();
                                 while (pendingChunks.Count >= maxConcurrentChunks) await DrainOne();
                                 byte[] buffer = availableBuffers.Count > 0 ? availableBuffers.Dequeue() : new byte[ChunkSize];
-                                int filled = 0, n;
-                                while (filled < buffer.Length && (n = await input.ReadAsync(buffer.AsMemory(filled), chunkCancellation.Token)) > 0) filled += n;
-                                if (filled == 0) { availableBuffers.Enqueue(buffer); break; }
-                                string id = Hash(buffer.AsSpan(0, filled));
-                                if (pendingChunks.TryGetValue(id, out var pendingChunk))
+                                try
                                 {
-                                    pendingChunks[id] = (pendingChunk.Task, pendingChunk.Buffer, checked(pendingChunk.LogicalBytes + filled));
-                                    availableBuffers.Enqueue(buffer);
+                                    int filled = 0, n;
+                                    while (filled < buffer.Length && (n = await input.ReadAsync(buffer.AsMemory(filled), chunkCancellation.Token)) > 0) filled += n;
+                                    if (filled == 0) { availableBuffers.Enqueue(buffer); break; }
+                                    string id = Hash(buffer.AsSpan(0, filled));
+                                    if (pendingChunks.TryGetValue(id, out var pendingChunk))
+                                    {
+                                        pendingChunks[id] = (pendingChunk.Task, pendingChunk.Buffer, checked(pendingChunk.LogicalBytes + filled));
+                                        availableBuffers.Enqueue(buffer);
+                                    }
+                                    else if (completedChunks.Contains(id))
+                                    {
+                                        availableBuffers.Enqueue(buffer);
+                                        progressBytes = checked(progressBytes + filled);
+                                        progress?.Report(new BackupProgress("backup", progressPath, count, progressBytes, estimatedTotal));
+                                    }
+                                    else pendingChunks.Add(id, (ProcessChunk(id, buffer, filled), buffer, filled));
+                                    entry.Chunks.Add(id); fileBytes += filled;
                                 }
-                                else if (completedChunks.Contains(id))
-                                {
-                                    availableBuffers.Enqueue(buffer);
-                                    progressBytes = checked(progressBytes + filled);
-                                    progress?.Report(new BackupProgress("backup", progressPath, count, progressBytes, estimatedTotal));
-                                }
-                                else pendingChunks.Add(id, (ProcessChunk(id, buffer, filled), buffer, filled));
-                                entry.Chunks.Add(id); fileBytes += filled;
+                                finally { buffer = null!; }
                             }
                         }
                         while (pendingChunks.Count > 0) await DrainOne();
@@ -343,6 +347,12 @@ public sealed class BackupEngine
             try { await Task.WhenAll(pendingChunks.Values.Select(value => value.Task)); } catch { }
             if (!ct.IsCancellationRequested) chunkFailure?.Throw();
             throw;
+        }
+        finally
+        {
+            // Completed async operations may remain rooted by the UI; do not retain chunk buffers.
+            pendingChunks.Clear();
+            availableBuffers.Clear();
         }
         ct.ThrowIfCancellationRequested();
         progress?.Report(new BackupProgress("finalizing", null, count, progressBytes, estimatedTotal));
@@ -451,10 +461,14 @@ public sealed class BackupEngine
                             pending.Enqueue(FetchChunk(entry.Chunks[next++]));
                         byte[] chunk = await pending.Peek();
                         _ = pending.Dequeue();
-                        written = checked(written + chunk.Length);
-                        if (written > entry.Length) throw new InvalidDataException("File exceeds manifest length.");
-                        await output.WriteAsync(chunk, chunkCancellation.Token);
-                        progress?.Report(new BackupProgress("restore", path, files, checked(bytes + written), totalBytes));
+                        try
+                        {
+                            written = checked(written + chunk.Length);
+                            if (written > entry.Length) throw new InvalidDataException("File exceeds manifest length.");
+                            await output.WriteAsync(chunk, chunkCancellation.Token);
+                            progress?.Report(new BackupProgress("restore", path, files, checked(bytes + written), totalBytes));
+                        }
+                        finally { chunk = null!; }
                     }
                 }
                 catch
@@ -464,6 +478,7 @@ public sealed class BackupEngine
                     if (!ct.IsCancellationRequested) chunkFailure?.Throw();
                     throw;
                 }
+                finally { pending.Clear(); }
                 if (written != entry.Length) throw new InvalidDataException("File length does not match manifest.");
                 await output.FlushAsync(ct);
             }

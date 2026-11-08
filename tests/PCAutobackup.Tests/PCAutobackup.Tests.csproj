@@ -10,4 +10,5 @@
     <ProjectReference Include="../../src/PCAutobackup.Core/PCAutobackup.Core.csproj" />
   </ItemGroup>
   <ItemGroup><Using Include="Xunit" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/PCAutobackup.Desktop/IdleTransferMemoryCleanup.cs" Link="Desktop/IdleTransferMemoryCleanup.cs" /></ItemGroup>
 </Project>
