@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>คู่มือติดตั้ง PC AutoBackup — สำรองทุกวัน 21:00</title>
+<style>
+:root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#eef3f2;color:#19332f;font:17px/1.8 "Leelawadee UI",Tahoma,system-ui,sans-serif}main{max-width:960px;margin:32px auto;padding:40px 52px;background:white;border:1px solid #d7e3df;border-radius:16px}h1{font-size:30px;line-height:1.45;color:#164b40;margin-top:0}h2{margin-top:2em;padding-top:.5em;border-top:2px solid #dce9e4;font-size:24px;color:#164b40}h3{font-size:20px}a{color:#126851;text-underline-offset:3px;overflow-wrap:anywhere}p,li{overflow-wrap:anywhere}li{margin:.45em 0}strong{color:#163f35}code{font-size:.92em;background:#eef4f1;padding:2px 5px;border-radius:4px}pre{padding:16px;background:#eef4f1;overflow:auto;border-radius:8px}pre code{padding:0}table{width:100%;border-collapse:collapse;font-size:16px}th,td{padding:12px;border:1px solid #d7e3df;text-align:left;vertical-align:top}th{background:#edf5f1}input{accent-color:#126851}.banner{padding:12px 16px;margin-bottom:28px;background:#e9f3ef;border-radius:8px;font-size:15px}@media(max-width:640px){main{margin:0;padding:24px 18px;border-radius:0}h1{font-size:26px}h2{font-size:22px}table{font-size:14px}th,td{padding:7px}}@media print{body{background:white;color:black;font-size:11pt}main{max-width:none;margin:0;padding:0;border:0;border-radius:0}h2,h3{break-after:avoid}li,tr,pre{break-inside:avoid}a{color:#164b40}pre{white-space:pre-wrap}table{font-size:10pt}.banner{font-size:10pt} @page{size:A4;margin:18mm}}
+</style></head><body><main><div class="banner">คู่มือสำหรับส่งต่อผู้ติดตั้งใหม่ • เปิดอ่านได้โดยไม่ใช้อินเทอร์เน็ต ยกเว้นลิงก์ภายนอก • พิมพ์หรือบันทึกเป็น PDF ผ่าน Ctrl+P</div>
+<h1 id="pc-autobackup">คู่มือติดตั้ง PC AutoBackup สำหรับผู้ใช้ใหม่</h1>
+<p>สำหรับ <strong>v2026.11.08-resume บน Windows x64</strong> ตรวจขั้นตอนเทียบกับแอปรุ่นนี้เมื่อ 8 พฤศจิกายน 2026</p>
+<p>เป้าหมาย: สำรองโฟลเดอร์ที่เลือกไป Google Drive แบบเข้ารหัส <strong>วันละครั้ง 21:00 ตามเวลาของ Windows</strong> เก็บประวัติเริ่มต้น <strong>7 วัน</strong> และเตรียมกุญแจสำหรับกู้คืนเมื่อเครื่องเสีย</p>
+<h2 id="section">เตรียมก่อนเริ่ม</h2>
+<ul>
+<li>บัญชี Google ที่มีพื้นที่ Drive เพียงพอ และอินเทอร์เน็ต</li>
+<li>USB หรือที่เก็บปลอดภัยนอก PC สำหรับกุญแจกู้คืน</li>
+<li>ตัวติดตั้งสำหรับ Windows x64 ไม่ต้องติดตั้ง .NET เพิ่ม ไม่ต้องใช้สิทธิ์ Administrator</li>
+<li>รุ่นนี้ไม่มี OAuth client กลางในตัวติดตั้ง ผู้ใช้ใหม่ต้องตั้ง Google Cloud ของตนเองหนึ่งครั้งตามขั้นตอน 2</li>
+<li>แอปสำรองไฟล์ที่เลือก ไม่ใช่การโคลน Windows ไดรเวอร์ หรือย้ายโปรแกรมทั้งหมด</li>
+</ul>
+<h2 id="exe">1. ดาวน์โหลดและติดตั้ง .exe</h2>
+<ol>
+<li>เปิด <a href="https://github.com/sanchatmd-dev/PCAutobackup/releases/tag/v2026.11.08-resume">หน้า Release รุ่น Resume</a></li>
+<li>ใน <strong>Assets</strong> ดาวน์โหลด <strong>PCAutobackup-win-x64.exe</strong> ประมาณ 206.64 MB อย่าเลือก Source code ZIP แทน</li>
+<li>หากอัปเดตเครื่องที่ติดตั้งอยู่แล้ว ให้ปิดหน้าตั้งค่าและรอให้งานสำรอง/กู้คืนเสร็จก่อนติดตั้งทับ ไม่ต้องลบการตั้งค่าเดิม</li>
+<li>ดับเบิลคลิก <code>.exe</code> รอติดตั้งจนเสร็จ แอปจะเปิด พร้อมไอคอนเมฆ <strong>PC AutoBackup</strong> บน Desktop และ Start Menu</li>
+<li>เปิดจากไอคอน Desktop ได้ในครั้งถัดไป ภาษาไทยเป็นค่าเริ่มต้น เปลี่ยนเป็น English ได้ที่ <strong>การตั้งค่า → ภาษาของแอป</strong></li>
+</ol>
+<p>ตัวติดตั้งยังไม่มีลายเซ็น code signing จึงอาจพบคำเตือนผู้เผยแพร่จาก Windows ตรวจแหล่งดาวน์โหลดก่อนดำเนินการ ไม่ต้องปิดระบบป้องกันของ Windows หากเครื่ององค์กรบล็อก ให้ติดต่อผู้ดูแล</p>
+<p>หากต้องการตรวจไฟล์ ดาวน์โหลด <code>SHA256SUMS.txt</code> จาก Release เดียวกัน เปิด PowerShell แล้วรันคำสั่งนี้ โดยแก้พาธให้ตรงกับไฟล์:</p>
+<pre><code class="language-powershell">Get-FileHash -Algorithm SHA256 -LiteralPath &quot;$env:USERPROFILE\Downloads\PCAutobackup-win-x64.exe&quot;
+</code></pre>
+<p>ค่า Hash ต้องตรงกับบรรทัดของ <code>.exe</code> ใน <code>SHA256SUMS.txt</code></p>
+<h2 id="google-oauth">2. เตรียม Google OAuth ครั้งแรก</h2>
+<p>ใช้บัญชีและโปรเจกต์ของคุณเอง แอป <strong>ไม่ขอรหัสผ่าน Google</strong> ชื่อเมนู Google อาจเปลี่ยนจากคู่มือได้</p>
+<h3 id="api">2.1 สร้างโปรเจกต์และเปิด API</h3>
+<ol>
+<li>เข้า <a href="https://console.cloud.google.com/">Google Cloud Console</a> ด้วยบัญชีของคุณ</li>
+<li>เปิดตัวเลือกโปรเจกต์ด้านบน เลือก <strong>New project</strong> ตั้งชื่อ เช่น <code>PC AutoBackup</code> กด <strong>Create</strong> แล้วเลือกโปรเจกต์ใหม่นี้</li>
+<li>ไป <strong>APIs &amp; Services → Library</strong> ค้นหา <strong>Google Drive API</strong> แล้วกด <strong>Enable</strong></li>
+</ol>
+<h3 id="audience">2.2 ตั้งชื่อแอปและ Audience</h3>
+<ol>
+<li>เปิด <strong>Google Auth Platform</strong> หรือ <strong>OAuth consent screen</strong> แล้วกด <strong>Get started</strong> หากยังไม่ได้ตั้งค่า</li>
+<li>ใส่ชื่อแอป เช่น <code>PC AutoBackup</code> เลือก User support email และ Contact email ของคุณ</li>
+<li>บัญชี Gmail ส่วนบุคคลเลือก Audience แบบ <strong>External</strong> อ่านและยอมรับนโยบายเมื่อคุณเห็นด้วย แล้วบันทึก</li>
+<li>หากยังเป็น <strong>Testing</strong> เข้า <strong>Audience → Test users → Add users</strong> เพิ่มอีเมลที่จะใช้สำรองแล้วกด <strong>Save</strong></li>
+</ol>
+<p><strong>งานระยะยาว:</strong> ตรวจ <strong>Audience → Publish app</strong> และเปลี่ยนจนแสดง <strong>In production</strong> หาก Google ขอ Branding เช่นหน้าเว็บ นโยบายความเป็นส่วนตัว หรือโดเมน ให้ใช้ข้อมูลจริงที่คุณมีสิทธิ์ใช้และทำตามข้อกำหนดบนหน้าจอ หากยังทำไม่ได้ ให้ใช้ Testing ทดสอบก่อนและขอผู้ดูแลช่วย ไม่ใส่เว็บไซต์สมมติหรืออ้างโดเมนของผู้พัฒนาเป็นของคุณ</p>
+<p>External/Testing ที่ขอสิทธิ์ Drive มี refresh token อายุ 7 วัน จึงอาจต้องเชื่อมใหม่ Production ยกเลิกข้อจำกัดจากสถานะ Testing นี้ แต่ไม่ได้รับประกันว่าจะไม่ต้องเชื่อมใหม่ด้วยเหตุอื่น และไม่เท่ากับ Google รับรองแอปแล้ว อ้างอิง <a href="https://developers.google.com/identity/protocols/oauth2#expiration">อายุ token ของ Google</a> และ <a href="https://developers.google.com/identity/protocols/oauth2/production-readiness/overview">สถานะแอป OAuth</a></p>
+<h3 id="desktop-client">2.3 สร้าง Desktop client</h3>
+<ol>
+<li>เข้า <strong>Google Auth Platform → Clients → Create client</strong></li>
+<li>เลือก <strong>Application type: Desktop app</strong> ตั้งชื่อ เช่น <code>PC AutoBackup Windows</code> แล้วกด <strong>Create</strong></li>
+<li>ดาวน์โหลด <strong>JSON</strong> และเก็บไว้ในที่ปลอดภัย ไม่เลือก Web application และไม่ต้องใส่ redirect URL ของเว็บไซต์</li>
+<li>เก็บสำเนา JSON นอกเครื่อง จดว่าเป็นของ Google Cloud project ใด ต้องใช้ OAuth application/project เดิมเมื่อกู้คืนคลัง Drive บนเครื่องใหม่ในรุ่นนี้</li>
+</ol>
+<p>อ่านเพิ่ม: <a href="https://github.com/sanchatmd-dev/PCAutobackup/blob/main/docs/google-setup.md">คู่มือ OAuth ของโครงการ</a> และ <a href="https://developers.google.com/identity/protocols/oauth2/native-app">Desktop OAuth ของ Google</a></p>
+<h2 id="google-drive">3. เชื่อม Google Drive ในแอป</h2>
+<ol>
+<li>ไป <strong>พื้นที่จัดเก็บ</strong> เลือก <strong>Google Drive</strong> ซึ่งเป็นปลายทางเริ่มต้น</li>
+<li>ขยาย <strong>การตั้งค่า Google OAuth สำหรับแอป</strong> กด <strong>นำเข้าไฟล์ client JSON…</strong> เลือกไฟล์จากขั้นตอน 2.3</li>
+<li>ช่อง <strong>อีเมลสำหรับแนะนำบัญชี</strong> กรอกหรือเว้นว่างได้ การพิมพ์อีเมลยังไม่ใช่การเชื่อมต่อ</li>
+<li>กด <strong>เชื่อมต่อ Google</strong> เลือกบัญชีในเบราว์เซอร์ ตรวจชื่อแอปและอนุญาตสิทธิ์ตามหน้าจอ Google</li>
+<li>กลับมาที่แอป ตรวจว่าแสดงอีเมลบัญชีที่ต้องการจริง หากผิดบัญชี ให้ยกเลิกการเชื่อมต่อแล้วเลือกใหม่</li>
+</ol>
+<p>สิทธิ์คือ <code>openid</code>, <code>email</code>, <code>drive.file</code> สำหรับไฟล์ที่แอปสร้างหรือได้รับสิทธิ์ ไม่ต้องเปิด Google Drive for desktop ค้างไว้ และไม่ส่งรหัสผ่าน Google ให้ผู้ส่งตัวติดตั้ง</p>
+<p>คลังเข้ารหัสอยู่ภายใต้ <code>PC AutoBackup</code> ใน Drive แยกตามเครื่อง ชื่อไฟล์ในคลังอาจอ่านไม่รู้เรื่อง ไม่ควรย้าย แก้ หรือลบชิ้นส่วนของคลังด้วยตนเอง</p>
+<h2 id="section-1">4. เลือกโฟลเดอร์สำรอง</h2>
+<ol>
+<li>เปิด <strong>โฟลเดอร์ต้นทาง → เพิ่มโฟลเดอร์</strong></li>
+<li>เลือกโฟลเดอร์ เช่น Documents, Pictures หรือโฟลเดอร์งาน เลือกหลายโฟลเดอร์ใน dialog ได้ หรือกดเพิ่มอีกครั้ง</li>
+<li>ตรวจพาธในรายการให้ถูกต้อง หากเลือกผิดให้นำออกจากรายการ การนำรายการออกไม่ลบไฟล์ต้นฉบับ</li>
+</ol>
+<p>เริ่มจากโฟลเดอร์เล็กที่มีไฟล์ทดสอบ แล้วค่อยเพิ่มข้อมูลจริงหลังทดลองกู้คืน เลือกเฉพาะข้อมูลจำเป็น หลีกเลี่ยงทั้งไดรฟ์ Windows และโฟลเดอร์แม่/ลูกซ้ำกัน หากต้นทางเป็นดิสก์ภายนอก ให้ต่อไว้ตอนสำรอง ไฟล์ที่ถูกล็อกหรืออ่านไม่ได้อาจทำให้งานล้มเหลว</p>
+<h2 id="section-2">5. ส่งออกและเก็บกุญแจกู้คืน</h2>
+<ol>
+<li>เตรียม USB หรือที่เก็บปลอดภัยที่เข้าถึงได้แม้ PC นี้เสีย</li>
+<li>ไป <strong>การตั้งค่า → เก็บกุญแจให้พร้อม ก่อนวันที่ต้องใช้ → ส่งออกกุญแจกู้คืน…</strong></li>
+<li>บันทึกไฟล์ <strong><code>.pcakey</code></strong> ไปยังที่เตรียมไว้ ตั้งชื่อให้ระบุเครื่องหรือคลังได้</li>
+<li>ตรวจว่าไฟล์อยู่จริง และสถานะในแอประบุว่าเคยส่งออกหรือนำเข้ากุญแจแล้ว</li>
+<li>เก็บสำเนาอีกชุดแยกสถานที่ แล้วเก็บ USB ให้ปลอดภัย</li>
+</ol>
+<p><strong>อย่าเก็บกุญแจเพียงสำเนาเดียวใน PC ที่สำรอง หรือเฉพาะในคลังเข้ารหัสที่ต้องใช้กุญแจนี้เปิด</strong> ผู้ที่มีทั้งกุญแจและคลังอ่านข้อมูลได้ หากกุญแจหายและใช้เครื่องเดิมไม่ได้ แอปไม่มีระบบรีเซ็ตเพื่อถอดรหัสแทน</p>
+<table>
+<thead>
+<tr>
+<th>สิ่งที่เก็บนอกเครื่อง</th>
+<th>ใช้ทำอะไร</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.pcakey</code> เก็บเป็นความลับ</td>
+<td>ถอดรหัสข้อมูลสำรอง</td>
+</tr>
+<tr>
+<td>Desktop OAuth client JSON เก็บอย่างปลอดภัย</td>
+<td>เชื่อม application/project เดิมบนเครื่องใหม่เพื่อค้นคลังเดิม</td>
+</tr>
+<tr>
+<td>ชื่อบัญชี Google ชื่อเครื่อง/คลัง และโปรเจกต์</td>
+<td>ช่วยเลือกข้อมูลให้ถูก โดยไม่จดรหัสผ่านรวมกับกุญแจ</td>
+</tr>
+</tbody>
+</table>
+<p>client JSON <strong>ใช้แทน <code>.pcakey</code> ไม่ได้</strong> การล็อกอิน Drive สำเร็จอย่างเดียวก็ยังถอดรหัสไม่ได้</p>
+<h2 id="section-3">6. สำรองและทดลองกู้คืนครั้งแรก</h2>
+<ol>
+<li>ตรวจบัญชี Google โฟลเดอร์ และการส่งออกกุญแจ แล้วกด <strong>สำรองตอนนี้</strong></li>
+<li>รอจนแจ้งสำเร็จ หากเกิดข้อผิดพลาดให้แก้ก่อนพึ่งพางานอัตโนมัติ รอบแรกอาจนานตามขนาดข้อมูลและความเร็วเน็ต</li>
+<li>ไป <strong>ประวัติและกู้คืน → รีเฟรช</strong> ตรวจว่ามีชุดสำรองสำเร็จ</li>
+<li>เลือกชุด กด <strong>กู้คืนชุดที่เลือก…</strong> แล้วเลือก <strong>โฟลเดอร์ว่างใหม่แยกจากต้นฉบับ</strong> เช่น <code>PCAB-Restore-Test</code> ที่สร้างไว้ใน Documents</li>
+<li>เปิดไฟล์ที่กู้คืนและเทียบกับต้นฉบับ แอปสร้างโฟลเดอร์แยกตามต้นทางภายในปลายทาง ไม่เขียนทับไฟล์เดิมอย่างเงียบ ๆ</li>
+</ol>
+<p>การกู้คืนชุดที่เลือกจะกู้คืนข้อมูลของชุดนั้น จึงควรทดสอบด้วยชุดเล็กก่อนเพิ่มโฟลเดอร์ใหญ่</p>
+<h2 id="section-4">7. เปิดอัตโนมัติวันละครั้ง 21:00</h2>
+<ol>
+<li>ไป <strong>การตั้งค่า → สำรองตามเวลาของคุณ</strong></li>
+<li>ติ๊ก <strong>เปิดสำรองอัตโนมัติทุกวัน</strong></li>
+<li>ช่อง <strong>เวลาสำรองแต่ละวัน (HH:mm)</strong> ให้มีเพียง <strong><code>21:00</code></strong> สำหรับวันละครั้ง</li>
+<li>ตั้ง <strong>เก็บประวัติ (จำนวนวัน)</strong> เป็น <strong><code>7</code></strong> ตามค่าเริ่มต้น</li>
+<li><strong>จำกัดพื้นที่คลังสำรอง (GB, ไม่บังคับ)</strong> เว้นว่างได้ หรือใส่เพดานที่พอกับข้อมูลและพื้นที่ Drive</li>
+<li>กด <strong>บันทึกการตั้งค่า</strong> รอข้อความสำเร็จ แล้วตรวจตารางในหน้า <strong>ภาพรวม</strong></li>
+<li>ตรวจเวลาและเขตเวลา Windows ให้ถูกต้อง หากต้องการ 21:00 เวลาไทย ใช้เขตเวลา <strong>(UTC+07:00) Bangkok, Hanoi, Jakarta</strong></li>
+</ol>
+<p>ติดตั้งใหม่ยังไม่เริ่มอัตโนมัติจนกว่าจะเลือกต้นทาง เชื่อมปลายทาง ส่งออกกุญแจ และเปิดตารางเอง ค่าเริ่มต้น 21:00 ไม่ได้หมายความว่าติดตั้งแล้วจะเริ่มโดยไม่ตั้งค่า</p>
+<p>หลังเปิดตาราง ระบบอาจสำรองชดเชยรอบที่ถึงกำหนดไปแล้วเมื่อมี trigger ตรวจงานค้าง ไม่จำเป็นต้องรอ 21:00 ครั้งถัดไปเสมอ</p>
+<p>ตรวจเพิ่มเติมได้ที่ <strong>Task Scheduler → Task Scheduler Library</strong> หางานชื่อขึ้นต้น <code>PCAutobackup-</code> ดูว่า Enabled และ Daily trigger เป็น 21:00 การมี logon/unlock/resume triggers เพิ่มถือว่าปกติ</p>
+<h2 id="resume">8. ใช้งานประจำวันและ Resume</h2>
+<ul>
+<li>ปิดหน้าต่างหลังตั้งค่าได้ ไอคอนเมฆในถาดระบบเริ่มเมื่อเข้าสู่ Windows ระหว่างมีงาน ปิดหรือย่อหน้าต่างแล้วงานยังทำต่อ</li>
+<li>เวลา 21:00 ต้องเปิดเครื่อง ล็อกอินผู้ใช้ Windows เดิม และเข้าถึงต้นทาง/อินเทอร์เน็ตได้</li>
+<li>หากปิดเครื่องหรือ Sleep ระบบตรวจรอบที่พลาดหลังเข้า Windows ปลดล็อก หรือกลับจาก Sleep ประมาณ 1 นาที รวมชดเชยหนึ่งรอบ แอปไม่ปลุกเครื่องเอง</li>
+<li>ถ้าถึงรอบใหม่แต่งานยังไม่เสร็จ งานเดิมทำต่อ ไม่มีงานสำรองซ้อน</li>
+<li>เน็ตขาดหรือ process ถูกปิด: รอบใหม่ใช้ก้อนที่สำเร็จแล้วต่อได้ ต้องอ่าน/hash ต้นทางและตรวจชิ้นส่วนค้างใหม่ ก้อนที่ยังไม่ครบส่งใหม่สูงสุด 4 MiB</li>
+<li>หากกดยกเลิกเอง ระบบไม่บังคับเริ่มใหม่ทันที กด <strong>สำรองตอนนี้</strong> เพื่อทำต่อได้</li>
+<li>Task Scheduler ตั้งลองใหม่เมื่องานล้มเหลวทุก 5 นาที สูงสุด 3 ครั้งต่อ trigger การเริ่มจริงขึ้นกับ Windows และเครือข่าย</li>
+<li>ไฟล์ที่ลบในต้นทางหายจากชุดล่าสุดเมื่อรอบใหม่สำเร็จ แต่ยังอยู่ในประวัติที่ไม่ถูกล้าง โควตาอาจทำให้ประวัติสั้นกว่า 7 วัน</li>
+<li>ชุดสำเร็จล่าสุดยังถูกเก็บไว้ ชิ้นส่วน Resume จากงานที่ล้มเหลวอาจกินพื้นที่เกินโควตาชั่วคราว ส่วนที่ไม่ใช้ล้างหลังสำรองสำเร็จ</li>
+</ul>
+<h2 id="section-5">9. กู้คืนเมื่อเปลี่ยนเครื่อง</h2>
+<ol>
+<li>ติดตั้งแอปบนเครื่องใหม่ เตรียม <code>.pcakey</code> และ client JSON เดิม</li>
+<li>นำเข้า OAuth client <strong>จาก application/project เดิม</strong> และเชื่อม <strong>บัญชี Google เดิม</strong> การสร้างโปรเจกต์ใหม่ไม่รับประกันว่าจะเห็นคลังเก่าด้วยสิทธิ์ <code>drive.file</code></li>
+<li>ไป <strong>ประวัติและกู้คืน → นำเข้ากุญแจกู้คืน…</strong> เลือก <code>.pcakey</code> ของคลังเดิม</li>
+<li>กด <strong>ค้นหาคลังใน Google Drive</strong> เลือกคลังเครื่องเดิม แล้วกด <strong>รีเฟรช</strong></li>
+<li>เลือกชุดและกู้คืนไป <strong>โฟลเดอร์ว่างใหม่</strong> ตรวจไฟล์ก่อนย้ายไปใช้งาน</li>
+<li>เมื่อเริ่มสำรองเครื่องใหม่ ให้ใช้คลังใหม่ของเครื่องใหม่ ไม่เขียนงานสำรองของเครื่องว่างลงคลังเครื่องเก่า</li>
+</ol>
+<h2 id="section-6">แก้ปัญหาเบื้องต้น</h2>
+<table>
+<thead>
+<tr>
+<th>อาการ</th>
+<th>สิ่งที่ตรวจ</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>เชื่อม Google ไม่ได้</td>
+<td>เปิด Drive API แล้วหรือไม่, client เป็น Desktop app, JSON ถูกโปรเจกต์, บัญชีอยู่ใน Test users หาก Testing; องค์กรอาจต้องอนุญาตโดยผู้ดูแล</td>
+</tr>
+<tr>
+<td>Google เตือนหรือบล็อก</td>
+<td>ตรวจชื่อแอป โปรเจกต์ บัญชี และข้อกำหนด Audience/Branding ไม่อนุญาตแอปที่ไม่รู้จัก</td>
+</tr>
+<tr>
+<td>ต้องเชื่อมใหม่ทุก 7 วัน</td>
+<td>ตรวจ External/Testing เปลี่ยน Production ให้ครบ แล้วเชื่อม Google ใหม่</td>
+</tr>
+<tr>
+<td>เริ่มงานไม่ได้เพราะกุญแจ</td>
+<td>ส่งออก <code>.pcakey</code> ผ่านแอปให้สำเร็จ การคัดลอก configuration ไม่ใช้แทน</td>
+</tr>
+<tr>
+<td>ไม่สำรองตอน 21:00</td>
+<td>ตรวจบันทึกเปิดอัตโนมัติแล้ว เวลา Windows ถูกต้อง ล็อกอินผู้ใช้เดิม task Enabled และข้อผิดพลาดล่าสุดในแอป</td>
+</tr>
+<tr>
+<td>พื้นที่ไม่พอ</td>
+<td>ตรวจทั้งพื้นที่ Drive และเพดาน GB ในแอป เพิ่มพื้นที่หรือปรับข้อมูล/โควตาโดยรักษาชุดล่าสุดไว้</td>
+</tr>
+<tr>
+<td>เครื่องใหม่หาชุดเดิมไม่พบ</td>
+<td>ตรวจบัญชี OAuth application/project คลัง และกุญแจให้ตรงกับเครื่องเดิม</td>
+</tr>
+</tbody>
+</table>
+<h2 id="section-7">ตรวจครบก่อนใช้งานจริง</h2>
+<ul class="contains-task-list">
+<li class="task-list-item"><input disabled="disabled" type="checkbox" /> เปิดแอปจาก Desktop ได้ และแสดงบัญชี Google ที่ถูกต้อง</li>
+<li class="task-list-item"><input disabled="disabled" type="checkbox" /> เตรียม OAuth สำหรับงานระยะยาวแล้ว</li>
+<li class="task-list-item"><input disabled="disabled" type="checkbox" /> โฟลเดอร์ต้นทางถูกต้อง พื้นที่ Drive เพียงพอ</li>
+<li class="task-list-item"><input disabled="disabled" type="checkbox" /> เก็บ <code>.pcakey</code> และ client JSON นอกเครื่อง และรู้ว่าใช้กับคลังใด</li>
+<li class="task-list-item"><input disabled="disabled" type="checkbox" /> สำรองครั้งแรกและทดลองกู้คืนสำเร็จ</li>
+<li class="task-list-item"><input disabled="disabled" type="checkbox" /> บันทึกเปิดอัตโนมัติ เวลาเดียว <strong>21:00</strong> ประวัติ <strong>7 วัน</strong></li>
+<li class="task-list-item"><input disabled="disabled" type="checkbox" /> วันเวลาและเขตเวลา Windows ถูกต้อง</li>
+</ul>
+<p>ส่งต่อคู่มือนี้พร้อมลิงก์ Release ได้ ไม่แนบ <code>.pcakey</code>, client JSON ของคุณ, token หรือ configuration ส่วนตัวให้ผู้ติดตั้งคนอื่น</p>
+
+</main></body></html>
