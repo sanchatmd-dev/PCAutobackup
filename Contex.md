@@ -160,3 +160,5 @@ Progress featureติดตั้งในเครื่องแล้ว Cor
 แก้idleRAM: Coreclearbufferrefsหลังdrain; Desktopone-timebackgroundAggressiveGC+LOHcompactionหลังApplicationIdle ไม่trimworking-set/no timer มีgenerationgateกับjobstart ทดสอบ182ผ่าน actualWPF A/BlocalSHA3/3ทั้งคู่ Drivepairedpost60private104.40→83.76MB WS163.89→127.18MB; localmixedWSสูงขึ้น ต้องอ่านข้อจำกัด Candidateติดตั้งในเครื่องCore4FB3112BDC97C96757C98201601A6D32C110E46DB54CC323587A5CC47D0D78C2 config/taskXMLเดิมคง16/16เวลา21:00 ดูdocs/idle-memory-fix-verification-2026-11-08.md ยังไม่commit/push
 
 เตรียมRelease v2026.11.08-idle-ram พร้อมตัวติดตั้งไฟล์เดียวและคู่มือHTML รุ่นนี้คงprogress%,processedMB/s,ETAและ16/16เวลา21:00 แต่เพิ่มคืนmanagedmemoryหลังงาน มีข้อจำกัดการวัดRAMก่อน–หลังตามรายงาน
+
+ตรวจติดตั้ง Release v2026.11.08-idle-ram ในเครื่องสำเร็จ exit 0 เทียบ SHA-256 กับ payload จาก build ตัวติดตั้งครบ 813 ไฟล์ ตรงทั้งหมด Installed Core F7BB6E24914827B1B222069634E9EEA3BDF134192BD701160F28D0F7B37765C3 Configuration/startup/scheduler XML ก่อน–หลังคงเดิม คง 16/16 และทุกวัน 21:00 เปิด Tray รุ่น Release แล้ว รายงาน docs/release-idle-ram-install-verification-2026-11-08.md
