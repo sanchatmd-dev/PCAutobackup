@@ -30,7 +30,8 @@ public static class WindowsScheduler
         try
         {
             await File.WriteAllTextAsync(temporary, xml, System.Text.Encoding.Unicode, ct);
-            await RunAsync(["/Create", "/TN", TaskName(config), "/XML", temporary, "/F"], ct);
+            var (created, message) = await RunAsync(["/Create", "/TN", TaskName(config), "/XML", temporary, "/F"], ct);
+            if (!created) throw new IOException(message);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
@@ -60,9 +61,35 @@ public static class WindowsScheduler
             """;
     }
 
-    public static Task RemoveAsync(AppConfiguration config, CancellationToken ct = default) => RunAsync(["/Delete", "/TN", TaskName(config), "/F"], ct);
+    public static async Task RemoveAsync(AppConfiguration config, CancellationToken ct = default)
+    {
+        var (deleted, message) = await RunAsync(["/Delete", "/TN", TaskName(config), "/F"], ct);
+        if (deleted) return;
+        // A task that was already removed outside the app is the requested end state. Otherwise
+        // the schedule could never be switched off again from the settings window.
+        // A failed schtasks /Query also means access denied or a stopped service, not only
+        // a missing task. Accept only the explicit COM file-not-found result.
+        object? service = null, folder = null, task = null;
+        try
+        {
+            service = Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service")!);
+            ((dynamic)service!).Connect();
+            folder = ((dynamic)service).GetFolder("\\");
+            task = ((dynamic)folder).GetTask(TaskName(config));
+        }
+        catch (Exception e) when (e is System.Runtime.InteropServices.COMException or FileNotFoundException && IsMissingTask(e.HResult)) { return; }
+        finally
+        {
+            foreach (var value in new[] { task, folder, service })
+                if (value is not null && System.Runtime.InteropServices.Marshal.IsComObject(value))
+                    System.Runtime.InteropServices.Marshal.FinalReleaseComObject(value);
+        }
+        throw new IOException(message);
+    }
 
-    private static async Task RunAsync(string[] args, CancellationToken ct)
+    internal static bool IsMissingTask(int hresult) => hresult == unchecked((int)0x80070002);
+
+    private static async Task<(bool Succeeded, string Message)> RunAsync(string[] args, CancellationToken ct)
     {
         var info = new ProcessStartInfo("schtasks.exe") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in args) info.ArgumentList.Add(arg);
@@ -70,6 +97,6 @@ public static class WindowsScheduler
         var output = process.StandardOutput.ReadToEndAsync(ct);
         var error = process.StandardError.ReadToEndAsync(ct);
         await process.WaitForExitAsync(ct);
-        if (process.ExitCode != 0) throw new IOException("ตั้งเวลาสำรองไม่สำเร็จ: " + await error + " " + await output);
+        return (process.ExitCode == 0, "ตั้งเวลาสำรองไม่สำเร็จ: " + await error + " " + await output);
     }
 }

@@ -32,15 +32,29 @@ public sealed class LocalBackupStore : IBackupStore
         CheckNoReparse(path);
         return path;
     }
-    public IDisposable AcquireLease()
+    /// <param name="readOnly">True for listing and restore, which must also work from a repository that cannot be written.</param>
+    public IDisposable AcquireLease(bool readOnly = false)
     {
-        string directory = Resolve("repository");
-        Directory.CreateDirectory(directory);
-        CheckNoReparse(directory);
         string path = Resolve("repository/lease.lock");
-        try { return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
-        catch (IOException e) { throw new IOException("Repository is already in use by another backup or restore.", e); }
+        try
+        {
+            string directory = Resolve("repository");
+            Directory.CreateDirectory(directory);
+            CheckNoReparse(directory);
+            return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (IOException e) when (IsSharingViolation(e)) { throw new IOException("Repository is already in use by another backup or restore.", e); }
+        catch (Exception e) when (readOnly && (e is UnauthorizedAccessException || e is IOException && (e.HResult & 0xffff) == 19))
+        {
+            // Read-only media or a read-only share: a restore writes nothing here and needs
+            // no exclusive lease. Backups never take this path. Hold a shared read handle
+            // when the lease file exists so a writer elsewhere cannot take it meanwhile.
+            if (!File.Exists(path)) return new MemoryStream();
+            try { return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read); }
+            catch (IOException shared) when (IsSharingViolation(shared)) { throw new IOException("Repository is already in use by another backup or restore.", shared); }
+        }
     }
+    private static bool IsSharingViolation(IOException e) => (e.HResult & 0xffff) is 32 or 33;
     public Task<bool> ExistsAsync(string name, CancellationToken ct = default) { ct.ThrowIfCancellationRequested(); return Task.FromResult(File.Exists(Resolve(name))); }
     public Task<Stream> OpenReadAsync(string name, CancellationToken ct = default)
     {

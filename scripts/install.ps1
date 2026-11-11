@@ -7,7 +7,8 @@ if (-not (Test-Path -LiteralPath (Join-Path $source 'PCAutobackup.exe'))) { thro
 $busy = @(Get-Process -Name 'PCAutobackup','PCAutobackup.Worker' -ErrorAction SilentlyContinue)
 if ($busy.Count) { throw 'Close PC AutoBackup settings and wait for any backup to finish, then run Install.cmd again.' }
 $tray = Join-Path $destination 'Tray\PCAutobackup.Tray.exe'
-if (Test-Path -LiteralPath $tray) {
+$updating = Test-Path -LiteralPath $tray
+if ($updating) {
     Start-Process -FilePath $tray -ArgumentList '--exit' -WindowStyle Hidden -Wait
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     while (@(Get-Process -Name 'PCAutobackup.Tray' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $tray }).Count -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
@@ -32,7 +33,9 @@ $startup = '"' + $tray + '" --background --config "' + $config + '"'
 if ($startup.Length -gt 260) { throw 'Startup command exceeds the Windows Run key limit.' }
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 if (-not (Test-Path -LiteralPath $runKey)) { New-Item -Path $runKey -Force | Out-Null }
-Set-ItemProperty -LiteralPath $runKey -Name 'PCAutobackup' -Value $startup
+# An update keeps "Start with Windows" off when the user turned it off from the tray menu.
+$startupOff = $updating -and $null -eq (Get-ItemProperty -LiteralPath $runKey).PCAutobackup
+if (-not $startupOff) { Set-ItemProperty -LiteralPath $runKey -Name 'PCAutobackup' -Value $startup }
 if (Test-Path -LiteralPath $config) {
     $refresh = Start-Process -FilePath (Join-Path $destination 'Worker\PCAutobackup.Worker.exe') -ArgumentList ('--refresh-schedule --config "' + $config + '"') -WindowStyle Hidden -Wait -PassThru
     if ($refresh.ExitCode -ne 0) { throw 'Installed, but schedule refresh failed. Open settings and save the schedule again.' }
@@ -40,4 +43,5 @@ if (Test-Path -LiteralPath $config) {
 if (-not $NoLaunch) { Start-Process -FilePath $tray -ArgumentList '--background' -WindowStyle Hidden }
 Write-Output "Installed: $destination"
 Write-Output "Desktop shortcut: $(Join-Path $desktop 'PC AutoBackup.lnk')"
-Write-Output 'Starts in the tray at Windows sign-in. Existing backup times and data are preserved.'
+if ($startupOff) { Write-Output 'Start with Windows was off before this update and stays off; turn it on from the tray menu. Existing backup times and data are preserved.' }
+else { Write-Output 'Starts in the tray at Windows sign-in. Existing backup times and data are preserved.' }

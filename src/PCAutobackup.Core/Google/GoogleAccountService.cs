@@ -116,27 +116,34 @@ public sealed class GoogleAccountService
 
     internal static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
-    private static async Task<string> ReadCallbackAsync(TcpListener listener, int port, string state, string language, CancellationToken ct)
+    internal static async Task<string> ReadCallbackAsync(TcpListener listener, int port, string state, string language, CancellationToken ct, TimeSpan? connectionTimeout = null)
     {
         while (true)
         {
             using var client = await listener.AcceptTcpClientAsync(ct);
             using var stream = client.GetStream();
             using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            requestTimeout.CancelAfter(TimeSpan.FromSeconds(10));
-            var header = new List<byte>();
-            var one = new byte[1];
-            while (header.Count < 16384 && await stream.ReadAsync(one, requestTimeout.Token) != 0)
+            requestTimeout.CancelAfter(connectionTimeout ?? TimeSpan.FromSeconds(10));
+            string[] line;
+            try
             {
-                header.Add(one[0]);
-                if (header.Count >= 4 && header[^4] == 13 && header[^3] == 10 && header[^2] == 13 && header[^1] == 10) break;
+                var header = new List<byte>();
+                var one = new byte[1];
+                while (header.Count < 16384 && await stream.ReadAsync(one, requestTimeout.Token) != 0)
+                {
+                    header.Add(one[0]);
+                    if (header.Count >= 4 && header[^4] == 13 && header[^3] == 10 && header[^2] == 13 && header[^1] == 10) break;
+                }
+                line = Encoding.ASCII.GetString(header.ToArray()).Split("\r\n", 2)[0].Split(' ');
+                if (line.Length != 3 || line[0] != "GET" || !line[1].StartsWith("/oauth2callback?", StringComparison.Ordinal))
+                {
+                    await ReplyAsync(stream, false, language, requestTimeout.Token);
+                    continue;
+                }
             }
-            var line = Encoding.ASCII.GetString(header.ToArray()).Split("\r\n", 2)[0].Split(' ');
-            if (line.Length != 3 || line[0] != "GET" || !line[1].StartsWith("/oauth2callback?", StringComparison.Ordinal))
-            {
-                await ReplyAsync(stream, false, language, ct);
-                continue;
-            }
+            // A connection that stays silent or drops (browser preconnect, port probe) is not the
+            // callback. Keep waiting for the real one until the overall sign-in timeout.
+            catch (Exception e) when (!ct.IsCancellationRequested && e is OperationCanceledException or IOException or SocketException) { continue; }
             var uri = new Uri($"http://127.0.0.1:{port}" + line[1]);
             var pairs = uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
                 .Select(x => x.Split('=', 2)).ToArray();
@@ -145,7 +152,9 @@ public sealed class GoogleAccountService
             var query = pairs.ToDictionary(x => Uri.UnescapeDataString(x[0]), x => x.Length == 2 ? Uri.UnescapeDataString(x[1].Replace('+', ' ')) : "");
             var valid = IsValidState(state, query.GetValueOrDefault("state"));
             var ok = valid && !query.ContainsKey("error") && !string.IsNullOrWhiteSpace(query.GetValueOrDefault("code"));
-            await ReplyAsync(stream, ok, language, ct);
+            // The page shown in the browser is a courtesy; a tab closed early must not discard a valid code.
+            try { await ReplyAsync(stream, ok, language, requestTimeout.Token); }
+            catch (Exception e) when (!ct.IsCancellationRequested && e is OperationCanceledException or IOException or SocketException) { }
             if (!valid) throw new InvalidOperationException("OAuth state ไม่ตรงกัน การเชื่อมต่อถูกยกเลิก");
             if (!ok) throw new InvalidOperationException("การอนุญาต Google ถูกยกเลิกหรือไม่ได้รับรหัสยืนยัน");
             return query["code"];

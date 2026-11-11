@@ -11,6 +11,8 @@ public sealed class ApplicationService
     public string ConfigurationPath { get; }
     public AppConfiguration Configuration { get; private set; } = new();
     private const int ProductionChunkConcurrency = 16;
+    /// <summary>Written to the restore destination when some files could not be restored.</summary>
+    public const string UnrestoredReportName = "PCAutobackup-unrestored-files.txt";
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly TimeProvider timeProvider;
     private string? recoveryLocalPath;
@@ -143,6 +145,8 @@ public sealed class ApplicationService
             await using var writer = new StreamWriter(file);
             await writer.WriteAsync(text);
             await writer.FlushAsync();
+            // The acknowledgement below unlocks backups; the key must be on disk first.
+            file.Flush(true);
             Configuration.RecoveryKeyAcknowledged = true;
             await SaveConfigurationAsync();
         }
@@ -235,7 +239,9 @@ public sealed class ApplicationService
                     status.BytesProcessed = p.BytesProcessed;
                     progress?.Report(p);
                 });
-                var result = await engine.BackupAsync(config, relay, ct);
+                // The engine scans, hashes and encrypts between awaits. Keep that off the caller's
+                // thread: in the settings window it is the UI thread, and the scan would freeze it.
+                var result = await Task.Run(() => engine.BackupAsync(config, relay, ct), ct);
                 status.Status = "Succeeded";
                 status.Message = result.Warnings.Count > 0 ? string.Join(Environment.NewLine, result.Warnings) : "สำรองข้อมูลสำเร็จ";
                 status.SnapshotId = result.SnapshotId;
@@ -261,8 +267,10 @@ public sealed class ApplicationService
             catch (Exception e)
             {
                 GoogleDiagnostics.Write("backup-round", status.StartedUtc.ToString("O"), 1, "failed", e);
-                status.Status = e is OperationCanceledException ? "Cancelled" : "Failed";
-                status.Message = SafeError(e);
+                // Only the caller's token is a deliberate cancellation; an internal timeout must stay retryable.
+                var cancelled = e is OperationCanceledException && ct.IsCancellationRequested;
+                status.Status = cancelled ? "Cancelled" : "Failed";
+                status.Message = cancelled ? SafeError(e) : e.Message;
                 status.CompletedUtc = timeProvider.GetUtcNow();
                 status.PeakWorkingSetBytes = Process.GetCurrentProcess().PeakWorkingSet64;
                 try { await ConfigurationStore.WriteJsonAtomicAsync(StatusPath, status); }
@@ -283,8 +291,9 @@ public sealed class ApplicationService
             key = GetKey(true);
             await using var store = await OpenStoreAsync(true, ct);
             using var repositoryLock = OperationLock.Acquire(RepositoryIdentity(true));
-            using var localLease = (store as LocalBackupStore)?.AcquireLease();
-            return await new BackupEngine(store, key).ListSnapshotsAsync(ct);
+            using var localLease = AcquireReadLease(store);
+            var engine = new BackupEngine(store, key);
+            return await Task.Run(() => engine.ListSnapshotsAsync(ct), ct);
         }
         finally { if (key is not null) CryptographicOperations.ZeroMemory(key); gate.Release(); }
     }
@@ -299,11 +308,35 @@ public sealed class ApplicationService
             key = GetKey(true);
             await using var store = await OpenStoreAsync(true, ct);
             using var repositoryLock = OperationLock.Acquire(RepositoryIdentity(true));
-            using var localLease = (store as LocalBackupStore)?.AcquireLease();
-            return await CreateProductionEngine(store, key).RestoreAsync(id, destination, progress, ct);
+            using var localLease = AcquireReadLease(store);
+            var engine = CreateProductionEngine(store, key);
+            var result = await Task.Run(() => engine.RestoreAsync(id, destination, progress, ct), ct);
+            // A window can show only a few lines. Keep the complete list beside the restored files.
+            if (result.Warnings.Count > 0)
+            {
+                await WriteRestoreReportAsync(destination, result.Warnings);
+            }
+            return result;
         }
         finally { if (key is not null) CryptographicOperations.ZeroMemory(key); gate.Release(); }
     }
+
+    internal static async Task WriteRestoreReportAsync(string destination, IReadOnlyList<string> warnings)
+    {
+        string path = Path.Combine(Path.GetFullPath(destination), UnrestoredReportName);
+        for (string? parent = Path.GetDirectoryName(path); parent is not null; parent = Path.GetDirectoryName(parent))
+            if ((File.GetAttributes(parent) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Reparse points are not allowed: " + parent);
+        // CreateNew refuses an existing file or link. Never overwrite unrelated data, and
+        // propagate failure so the UI cannot claim that a report was saved when it was not.
+        await using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        await using var writer = new StreamWriter(file);
+        foreach (string warning in warnings) await writer.WriteLineAsync(warning);
+    }
+
+    // Listing and restoring only read the repository, so a read-only or write-protected copy must stay
+    // recoverable. A lease held by a running job is still a sharing violation and still refuses.
+    private static IDisposable? AcquireReadLease(IBackupStore store) => (store as LocalBackupStore)?.AcquireLease(readOnly: true);
 
     public async Task SetScheduleAsync(bool enabled)
     {

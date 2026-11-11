@@ -29,7 +29,8 @@ public partial class App : Application
             Shutdown();
             return;
         }
-        DesktopRuntime.EnsureTray(AppContext.BaseDirectory, configurationPath);
+        // This process checks for a pending round below; a tray started here must not launch a second Worker for the same round.
+        DesktopRuntime.EnsureTray(AppContext.BaseDirectory, configurationPath, skipLaunchCheck: true);
         _instance.Listen(() => Dispatcher.BeginInvoke(() => (MainWindow as MainWindow)?.ShowSettings()));
         MainWindow = new MainWindow(configurationPath);
         MainWindow.Show();

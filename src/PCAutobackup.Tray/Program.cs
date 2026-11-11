@@ -72,7 +72,8 @@ internal static class Program
     {
         // Read on user interaction, not on a timer; language changes do not require restarting the resident tray.
         try { _language = ConfigurationStore.LoadAsync(_configuration).GetAwaiter().GetResult().Language; }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { }
+        // InvalidDataException (empty or unsupported configuration) is not an IOException; it must not end the tray from a window callback.
+        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException or System.Text.Json.JsonException) { }
     }
 
     private static nint WindowProc(nint window, uint message, nuint wParam, nint lParam)

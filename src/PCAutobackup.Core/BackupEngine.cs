@@ -18,7 +18,11 @@ public sealed class BackupEngine
     private readonly int maxConcurrentRestoreChunks;
     private static readonly Regex ChunkId = new("^[a-f0-9]{64}$", RegexOptions.CultureInvariant);
     private static readonly Regex SnapshotId = new("^[0-9]{17}-[a-f0-9]{32}$", RegexOptions.CultureInvariant);
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = false };
+    // The relaxed encoder writes non-ASCII paths as UTF-8 instead of six-byte \uXXXX escapes, which
+    // roughly halves a manifest of Thai paths. Readers of either form are unchanged.
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = false, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+    /// <summary>Device name shown for a listed snapshot whose manifest cannot be authenticated or parsed.</summary>
+    public const string DamagedSnapshotLabel = "Damaged snapshot (unreadable) / ชุดสำรองเสียหาย อ่านไม่ได้";
 
     public BackupEngine(IBackupStore store, byte[] recoveryKey, TimeProvider? timeProvider = null, int maxConcurrentChunks = 1, int maxConcurrentRestoreChunks = 1)
     {
@@ -50,7 +54,18 @@ public sealed class BackupEngine
         public List<Entry> Entries { get; set; } = [];
     }
     private sealed record ManifestSummary(string Id, DateTimeOffset CreatedUtc, string DeviceName, long FileCount, long TotalBytes, HashSet<string> Chunks);
-    private static ManifestSummary Summarize(Manifest m) => new(m.Id, m.CreatedUtc, m.DeviceName, m.Entries.LongCount(e => !e.Directory), m.Entries.Where(e => !e.Directory).Sum(e => e.Length), m.Entries.SelectMany(e => e.Chunks).ToHashSet(StringComparer.Ordinal));
+    private static ManifestSummary Summarize(Manifest m, HashSet<string>? sharedIds = null)
+    {
+        var chunks = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in m.Entries)
+            foreach (string id in entry.Chunks)
+            {
+                if (sharedIds is null) chunks.Add(id);
+                else if (sharedIds.TryGetValue(id, out string? shared)) chunks.Add(shared);
+                else { sharedIds.Add(id); chunks.Add(id); }
+            }
+        return new(m.Id, m.CreatedUtc, m.DeviceName, m.Entries.LongCount(e => !e.Directory), m.Entries.Where(e => !e.Directory).Sum(e => e.Length), chunks);
+    }
     private sealed class Entry
     {
         public string Path { get; set; } = "";
@@ -106,6 +121,13 @@ public sealed class BackupEngine
         {
             if (part is "" or "." or ".." || part.EndsWith(' ') || part.EndsWith('.') || part.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || part.Contains(':'))
                 throw new InvalidDataException("Invalid restore path.");
+            // NTFS stores unpaired surrogates, but the manifest JSON turns each into U+FFFD: the
+            // name would change on restore and two such names would become one manifest path.
+            for (int i = 0; i < part.Length; i++)
+            {
+                if (char.IsHighSurrogate(part[i]) && i + 1 < part.Length && char.IsLowSurrogate(part[i + 1])) i++;
+                else if (char.IsSurrogate(part[i])) throw new InvalidDataException("Invalid restore path.");
+            }
             var stem = part.Split('.')[0];
             if (Regex.IsMatch(stem, "^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
                 throw new InvalidDataException("Reserved restore path.");
@@ -116,6 +138,13 @@ public sealed class BackupEngine
         if (!SnapshotId.IsMatch(id)) throw new ArgumentException("Invalid snapshot ID.", nameof(id));
         byte[] plain = Decrypt(await ReadObject(ManifestName(id), 256 * 1024 * 1024, ct), "manifest:" + id);
         var manifest = JsonSerializer.Deserialize<Manifest>(plain, JsonOptions) ?? throw new InvalidDataException("Invalid manifest.");
+        ValidateManifest(manifest, id);
+        return manifest;
+    }
+    // One rule set for reading and for publishing: a manifest that fails here must never be
+    // committed, because it could not be read back and would block every later backup.
+    private static void ValidateManifest(Manifest manifest, string id)
+    {
         if (manifest.Version != 1 || manifest.Id != id || manifest.Entries is null) throw new InvalidDataException("Invalid manifest.");
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in manifest.Entries)
@@ -124,17 +153,29 @@ public sealed class BackupEngine
             ValidateRelativePath(entry.Path);
             if (!paths.Add(entry.Path) || entry.Length < 0 || (entry.Directory && (entry.Length != 0 || entry.Chunks.Count != 0)) || entry.Chunks.Any(x => x is null || !ChunkId.IsMatch(x))) throw new InvalidDataException("Invalid manifest entry.");
         }
-        return manifest;
     }
-    private async Task<List<ManifestSummary>> ReadAllManifests(CancellationToken ct)
+    // The bare authentication or parse error names nothing; keep its type and add the snapshot.
+    private static Exception NamedManifestError(string id, Exception ex) => ex is CryptographicException
+        ? new CryptographicException("Snapshot manifest cannot be authenticated with this recovery key: " + id, ex)
+        : new InvalidDataException("Snapshot manifest is damaged: " + id, ex);
+    // Backup passes no list and fails closed on the first manifest it cannot authenticate.
+    // Listing for restore collects them instead, so one damaged manifest cannot hide the rest.
+    private async Task<List<ManifestSummary>> ReadAllManifests(CancellationToken ct, List<(string Id, Exception Error)>? unreadable = null)
     {
         var result = new List<ManifestSummary>();
+        // Snapshots share most chunk IDs. Keep one string per ID across all summaries instead of
+        // one copy per retained snapshot.
+        var sharedIds = new HashSet<string>(StringComparer.Ordinal);
         await foreach (var obj in store.ListAsync("snapshots/", ct))
         {
             string file = obj.Name.StartsWith("snapshots/", StringComparison.Ordinal) ? obj.Name[10..] : "";
             if (!file.EndsWith(".manifest", StringComparison.Ordinal)) continue;
             string id = file[..^9];
-            if (SnapshotId.IsMatch(id)) result.Add(Summarize(await ReadManifest(id, ct)));
+            if (!SnapshotId.IsMatch(id)) continue;
+            try { result.Add(Summarize(await ReadManifest(id, ct), sharedIds)); }
+            catch (Exception ex) when (unreadable is not null && ex is CryptographicException or InvalidDataException or JsonException) { unreadable.Add((id, ex)); }
+            // Say which snapshot stopped the backup; the bare authentication error names nothing.
+            catch (Exception ex) when (ex is CryptographicException or InvalidDataException or JsonException) { throw NamedManifestError(id, ex); }
         }
         return result.OrderBy(x => x.CreatedUtc).ThenBy(x => x.Id, StringComparer.Ordinal).ToList();
     }
@@ -169,7 +210,9 @@ public sealed class BackupEngine
         if (string.IsNullOrWhiteSpace(label)) label = "Source";
         var invalid = Path.GetInvalidFileNameChars();
         label = new string(label.Select(c => invalid.Contains(c) || char.IsControl(c) ? '_' : c).ToArray()).Trim().TrimEnd('.');
-        if (label.Length > 80) label = label[..80].TrimEnd(' ', '.');
+        // The label is only a display prefix: an unpaired surrogate becomes U+FFFD, as earlier versions stored it.
+        label = string.Concat(label.EnumerateRunes());
+        if (label.Length > 80) label = label[..(char.IsHighSurrogate(label[79]) ? 79 : 80)].TrimEnd(' ', '.');
         if (string.IsNullOrEmpty(label)) label = "Source";
         string suffix = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(source.Id)))[..12];
         string result = label + "-" + suffix;
@@ -192,8 +235,23 @@ public sealed class BackupEngine
             // must still fail rather than silently excluding unreadable source data.
             string? target = info.LinkTarget;
             if (target is null) { CheckReparse(path); return false; }
-            skippedLinks[path] = Path.GetFullPath(target, Path.GetDirectoryName(path)!);
+            // A stored target may end with a separator; manifest paths never do.
+            skippedLinks[path] = Path.TrimEndingDirectorySeparator(Path.GetFullPath(target, Path.GetDirectoryName(path)!));
             return true;
+        }
+        // Win32 path normalization drops a trailing dot or space, so every later call, including
+        // the link test, would address a different (usually missing) file. Check that on the raw
+        // name before anything else. The remaining name rules apply only to entries that enter
+        // the manifest, after links were skipped. Quotes make a trailing space visible.
+        static void RequireOpenableName(string path)
+        {
+            string name = Path.GetFileName(path);
+            if (name.EndsWith(' ') || name.EndsWith('.')) throw new InvalidDataException("Source name cannot be restored on Windows: \"" + path + "\"");
+        }
+        static void RequireRestorableName(string path)
+        {
+            try { ValidateRelativePath(Path.GetFileName(path)); }
+            catch (InvalidDataException e) { throw new InvalidDataException("Source name cannot be restored on Windows: \"" + path + "\"", e); }
         }
         // Fail before creating ownership metadata if any selected source is unavailable.
         var preflightIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -224,7 +282,9 @@ public sealed class BackupEngine
                     foreach (string path in Directory.EnumerateFileSystemEntries(directory))
                     {
                         ct.ThrowIfCancellationRequested();
+                        RequireOpenableName(path);
                         if (SkipSourceLink(path)) continue;
+                        RequireRestorableName(path);
                         // The estimate only reads metadata. The directory's ancestor chain
                         // was checked above; the actual read pass still validates each path.
                         if (Directory.Exists(path)) directories.Push(path);
@@ -256,6 +316,14 @@ public sealed class BackupEngine
         var availableBuffers = new Queue<byte[]>();
         ExceptionDispatchInfo? chunkFailure = null;
         var completedChunks = new HashSet<string>(StringComparer.Ordinal);
+        // ReadManifest rejects paths that are equal ignoring case. NTFS can hold such pairs
+        // (case-sensitive directories, letters outside its upcase table), so refuse them here:
+        // a committed manifest that cannot be read back blocks every later backup and restore.
+        var manifestPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void ReserveManifestPath(string relative, string path)
+        {
+            if (!manifestPaths.Add(relative)) throw new IOException("Source names differ only by letter case and cannot be restored together: " + path);
+        }
         async Task ProcessChunk(string id, byte[] buffer, int filled)
         {
             var token = chunkCancellation.Token;
@@ -297,6 +365,11 @@ public sealed class BackupEngine
                         await store.DeleteAsync(name, token);
                         byte[] encrypted = Encrypt(buffer.AsSpan(0, filled), "chunk:" + id);
                         await Put(name, encrypted, token); Interlocked.Add(ref uploaded, encrypted.Length);
+                        // A delete can leave the old object under the name (delete-pending file on
+                        // exFAT or a share, a sync tool restoring it), and a store may then keep it.
+                        // Never count the repair as done without reading the replacement back.
+                        byte[] stored = await ReadChunk(id, token);
+                        if (!stored.AsSpan().SequenceEqual(buffer.AsSpan(0, filled))) throw new InvalidDataException("Existing chunk does not match its name.");
                     }
                 }
             }
@@ -334,14 +407,18 @@ public sealed class BackupEngine
                 while (pending.Count > 0)
                 {
                     ct.ThrowIfCancellationRequested(); var current = pending.Pop(); CheckReparse(current.Directory);
+                    ReserveManifestPath(current.Relative, current.Directory);
                     manifest.Entries.Add(new Entry { Path = current.Relative, Directory = true });
                     foreach (string path in Directory.EnumerateFileSystemEntries(current.Directory))
                     {
                         ct.ThrowIfCancellationRequested();
+                        RequireOpenableName(path);
                         if (SkipSourceLink(path)) continue;
+                        RequireRestorableName(path);
                         CheckReparse(path);
                         string relative = current.Relative + "/" + Path.GetFileName(path); ValidateRelativePath(relative);
                         if (Directory.Exists(path)) { pending.Push((path, relative)); continue; }
+                        ReserveManifestPath(relative, path);
                         progressPath = path;
                         var info = new FileInfo(path); long initialLength = info.Length; DateTime modified = info.LastWriteTimeUtc;
                         var entry = new Entry { Path = relative, Length = initialLength, ModifiedUtc = modified };
@@ -404,6 +481,7 @@ public sealed class BackupEngine
         progress?.Report(new BackupProgress("finalizing", null, count, progressBytes, estimatedTotal));
         if (drive is not null && !reusedTrusted.IsEmpty)
             await drive.RecheckTrustedChunksAsync(reusedTrusted, ct);
+        ValidateManifest(manifest, manifest.Id);
         byte[] manifestPlain = JsonSerializer.SerializeToUtf8Bytes(manifest, JsonOptions);
         if (manifestPlain.Length > 256 * 1024 * 1024 - 32) throw new InvalidOperationException("Snapshot manifest exceeds the supported size.");
         byte[] manifestBytes = Encrypt(manifestPlain, "manifest:" + manifest.Id);
@@ -457,20 +535,42 @@ public sealed class BackupEngine
         }
         if (total > quota.Value) throw new InvalidOperationException("The new snapshot exceeds the configured quota; the previous snapshot was retained.");
     }
-    public async Task<IReadOnlyList<SnapshotInfo>> ListSnapshotsAsync(CancellationToken ct = default) =>
-        (await ReadAllManifests(ct)).OrderByDescending(x => x.CreatedUtc).Select(x => new SnapshotInfo(x.Id, x.CreatedUtc, x.DeviceName, x.FileCount, x.TotalBytes)).ToList();
+    public async Task<IReadOnlyList<SnapshotInfo>> ListSnapshotsAsync(CancellationToken ct = default)
+    {
+        var unreadable = new List<(string Id, Exception Error)>();
+        var readable = await ReadAllManifests(ct, unreadable);
+        // Nothing authenticates: a wrong key or a foreign repository. Report the cause.
+        if (readable.Count == 0 && unreadable.Count > 0) throw NamedManifestError(unreadable[0].Id, unreadable[0].Error);
+        // Otherwise show damaged snapshots as such; restoring one still fails with its own error.
+        return readable.Select(x => new SnapshotInfo(x.Id, x.CreatedUtc, x.DeviceName, x.FileCount, x.TotalBytes))
+            .Concat(unreadable.Select(x => new SnapshotInfo(x.Id, CreatedFromId(x.Id), DamagedSnapshotLabel, 0, 0)))
+            .OrderByDescending(x => x.CreatedUtc).ToList();
+    }
+    private static DateTimeOffset CreatedFromId(string id) =>
+        DateTime.TryParseExact(id[..14], "yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var time)
+            ? new DateTimeOffset(DateTime.SpecifyKind(time, DateTimeKind.Utc)).AddMilliseconds(int.Parse(id.AsSpan(14, 3), System.Globalization.CultureInfo.InvariantCulture))
+            : DateTimeOffset.UnixEpoch;
     private async Task Prune(List<ManifestSummary> manifests, string committedId, int days, long? quota, List<string> warnings, CancellationToken ct)
     {
         manifests = manifests.OrderBy(x => x.CreatedUtc).ThenBy(x => x.Id, StringComparer.Ordinal).ToList();
         var newest = manifests.Single(m => m.Id == committedId);
         var keep = manifests.Where(m => m.Id != committedId).Append(newest).ToList();
+        // A retention longer than the calendar reaches back keeps everything; AddDays would throw.
+        var cutoff = (newest.CreatedUtc - DateTimeOffset.MinValue).TotalDays > days ? newest.CreatedUtc.AddDays(-days) : DateTimeOffset.MinValue;
         foreach (var m in manifests)
-            if (m != newest && (days == 0 || m.CreatedUtc < newest.CreatedUtc.AddDays(-days))) keep.Remove(m);
+            if (m != newest && (days == 0 || m.CreatedUtc < cutoff)) keep.Remove(m);
         var objects = new List<StoredObject>();
         await foreach (var obj in store.ListAsync("chunks/", ct)) objects.Add(obj);
         var sizes = objects.Where(o => o.Name.StartsWith("chunks/", StringComparison.Ordinal) && o.Name.EndsWith(".chunk", StringComparison.Ordinal) && ChunkId.IsMatch(o.Name[7..^6])).ToDictionary(o => o.Name[7..^6], o => o.Size, StringComparer.Ordinal);
         var manifestSizes = new Dictionary<string, long>();
         await foreach (var obj in store.ListAsync("snapshots/", ct)) manifestSizes[obj.Name] = obj.Size;
+        // The snapshots were listed once, before the first write. A manifest that shows up only
+        // now (late remote listing, another writer) references chunks this run would count as
+        // unreferenced. Without the complete set, delete nothing.
+        var listed = manifests.Select(m => ManifestName(m.Id)).ToHashSet(StringComparer.Ordinal);
+        if (manifestSizes.Keys.Any(name => name.StartsWith("snapshots/", StringComparison.Ordinal) && name.EndsWith(".manifest", StringComparison.Ordinal)
+                && SnapshotId.IsMatch(name[10..^9]) && !listed.Contains(name)))
+            throw new InvalidDataException("A snapshot that was not listed when this backup started is present; cleanup stopped.");
         long SizeOf(List<ManifestSummary> list)
         {
             var ids = list.SelectMany(m => m.Chunks).Distinct(StringComparer.Ordinal);
@@ -478,19 +578,34 @@ public sealed class BackupEngine
             foreach (var id in ids) { if (!sizes.TryGetValue(id, out long size)) throw new InvalidDataException("Snapshot references a missing chunk; cleanup stopped."); total = checked(total + size); }
             return total;
         }
-        // Validate references for every manifest before deleting anything.
-        _ = SizeOf(manifests);
+        // Every snapshot that stays must be complete before anything older is deleted. An expired
+        // snapshot with a missing chunk is not checked: it used to stop cleanup on every later
+        // run and could never age out itself.
+        _ = SizeOf(keep);
         while (quota.HasValue && keep.Count > 1 && SizeOf(keep) > quota.Value) keep.RemoveAt(0);
         if (quota.HasValue && SizeOf(keep) > quota.Value) warnings.Add("The latest snapshot exceeds the quota and was retained.");
         foreach (var m in manifests.Except(keep)) await store.DeleteAsync(ManifestName(m.Id), ct);
         var referenced = keep.SelectMany(m => m.Chunks).ToHashSet(StringComparer.Ordinal);
+        // One object that cannot be deleted (a Drive chunk with duplicate copies, a file held
+        // open) must not stop collection of the rest on this and every later run. A transport
+        // failure still ends cleanup: retrying every remaining chunk against a dead connection
+        // would take the full retry budget per object.
+        long undeleted = 0;
         foreach (var obj in objects)
             if (obj.Name.StartsWith("chunks/", StringComparison.Ordinal) && obj.Name.EndsWith(".chunk", StringComparison.Ordinal))
-            { string id = obj.Name[7..^6]; if (ChunkId.IsMatch(id) && !referenced.Contains(id)) await store.DeleteAsync(obj.Name, ct); }
+            {
+                string id = obj.Name[7..^6];
+                if (!ChunkId.IsMatch(id) || referenced.Contains(id)) continue;
+                try { await store.DeleteAsync(obj.Name, ct); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { undeleted++; }
+            }
+        if (undeleted > 0) warnings.Add("Unreferenced chunks that could not be deleted remain in the destination: " + undeleted.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
     public async Task<RestoreResult> RestoreAsync(string snapshotId, string destinationDirectory, IProgress<BackupProgress>? progress = null, CancellationToken ct = default)
     {
-        var manifest = await ReadManifest(snapshotId, ct);
+        Manifest manifest;
+        try { manifest = await ReadManifest(snapshotId, ct); }
+        catch (Exception ex) when (ex is CryptographicException or InvalidDataException or JsonException) { throw NamedManifestError(snapshotId, ex); }
         long totalBytes = manifest.Entries.Where(entry => !entry.Directory).Sum(entry => entry.Length);
         progress?.Report(new BackupProgress("restore", TotalBytes: totalBytes));
         string root = Path.GetFullPath(destinationDirectory); CheckReparse(root);
@@ -498,6 +613,8 @@ public sealed class BackupEngine
         if (Directory.Exists(root) && Directory.EnumerateFileSystemEntries(root).Any()) throw new IOException("Restore destination must be empty.");
         Directory.CreateDirectory(root); CheckReparse(root);
         long files = 0, bytes = 0;
+        var failures = new List<string>();
+        ExceptionDispatchInfo? firstFailure = null;
         foreach (var entry in manifest.Entries.OrderBy(x => x.Path.Count(c => c == '/')).ThenBy(x => x.Path, StringComparer.Ordinal))
         {
             ct.ThrowIfCancellationRequested();
@@ -556,10 +673,23 @@ public sealed class BackupEngine
                 if (written != entry.Length) throw new InvalidDataException("File length does not match manifest.");
                 await output.FlushAsync(ct);
             }
-            catch { if (created && File.Exists(path)) File.Delete(path); throw; }
+            catch (Exception ex)
+            {
+                if (created && File.Exists(path)) File.Delete(path);
+                // A chunk that is missing or fails authentication costs this file only. Stopping
+                // here would withhold every intact file that sorts after it, in every snapshot
+                // sharing the chunk. Transport, disk and cancellation errors still end the restore.
+                if (ct.IsCancellationRequested || ex is not (CryptographicException or InvalidDataException or FileNotFoundException)) throw;
+                firstFailure ??= ExceptionDispatchInfo.Capture(ex);
+                // Two fixed, translatable prefixes; the path is the only appended detail.
+                failures.Add((ex is FileNotFoundException ? "File not restored, its backup data is missing: " : "File not restored, its backup data is damaged: ") + entry.Path);
+                continue;
+            }
             File.SetLastWriteTimeUtc(path, entry.ModifiedUtc.UtcDateTime);
             files++; bytes += written; progress?.Report(new BackupProgress("restore", path, files, bytes, totalBytes));
         }
-        return new RestoreResult(files, bytes, []);
+        // Nothing usable came out (wrong repository contents, every chunk gone): report the cause.
+        if (files == 0) firstFailure?.Throw();
+        return new RestoreResult(files, bytes, failures);
     }
 }

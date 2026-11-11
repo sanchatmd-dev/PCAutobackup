@@ -101,7 +101,10 @@ public sealed class ProgressTelemetryTests : IDisposable
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         bool reportedWhileOpen = false;
         long reported = 0;
-        var engine = Engine();
+        // With a disk-backed store this test raced a 4 MiB write-through against reading
+        // 252 MiB of sparse zeros: when the read won, the first progress report arrived after
+        // the source was closed. A store that completes synchronously removes the race.
+        var engine = new BackupEngine(new SynchronousMemoryStore(), key, maxConcurrentChunks: 16, maxConcurrentRestoreChunks: 16);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => engine.BackupAsync(Config(), new InlineProgress(p =>
         {
             if (p.BytesProcessed == 0) return;
@@ -113,6 +116,29 @@ public sealed class ProgressTelemetryTests : IDisposable
         Assert.True(reportedWhileOpen);
         Assert.InRange(reported, 1, 256L * 1024 * 1024 - 1);
         Assert.Empty(await engine.ListSnapshotsAsync());
+    }
+
+    private sealed class SynchronousMemoryStore : IBackupStore
+    {
+        private readonly Dictionary<string, byte[]> objects = new(StringComparer.Ordinal);
+        public Task<bool> ExistsAsync(string name, CancellationToken ct = default) { lock (objects) return Task.FromResult(objects.ContainsKey(name)); }
+        public Task<Stream> OpenReadAsync(string name, CancellationToken ct = default)
+        { lock (objects) return objects.TryGetValue(name, out var bytes) ? Task.FromResult<Stream>(new MemoryStream(bytes, false)) : throw new FileNotFoundException(name); }
+        public Task PutAsync(string name, Stream content, bool overwrite = false, CancellationToken ct = default)
+        {
+            using var copy = new MemoryStream(); content.CopyTo(copy);
+            lock (objects) { if (overwrite || !objects.ContainsKey(name)) objects[name] = copy.ToArray(); }
+            return Task.CompletedTask;
+        }
+        public Task DeleteAsync(string name, CancellationToken ct = default) { lock (objects) objects.Remove(name); return Task.CompletedTask; }
+        public async IAsyncEnumerable<StoredObject> ListAsync(string prefix, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            StoredObject[] snapshot;
+            lock (objects) snapshot = objects.Where(o => o.Key.StartsWith(prefix, StringComparison.Ordinal)).Select(o => new StoredObject(o.Key, o.Value.Length, DateTimeOffset.UtcNow)).ToArray();
+            foreach (var item in snapshot) { ct.ThrowIfCancellationRequested(); yield return item; }
+            await Task.CompletedTask;
+        }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class BlockedUploadStore(IBackupStore inner) : IBackupStore

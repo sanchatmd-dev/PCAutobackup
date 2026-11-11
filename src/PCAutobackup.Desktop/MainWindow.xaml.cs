@@ -490,8 +490,10 @@ public partial class MainWindow : Window
     {
         var snapshots = await _service.ListSnapshotsAsync(ct);
         SnapshotsList.ItemsSource = snapshots.OrderByDescending(s => s.CreatedUtc).Select(s => new SnapshotRow(s, _service.Configuration.Language)).ToList();
-        EmptyHistory.Text = snapshots.Count == 0 ? T("ยังไม่พบชุดสำรองที่เสร็จสมบูรณ์ในคลังนี้") : F("พบ {0:N0} ชุดสำรอง", snapshots.Count);
-        StatusText.Text = F("อ่านประวัติสำรองแล้ว · {0:N0} ชุด", snapshots.Count);
+        // Rows marked damaged are listed so the user sees them, but they are not restorable snapshots.
+        int usable = snapshots.Count(s => s.DeviceName != BackupEngine.DamagedSnapshotLabel);
+        EmptyHistory.Text = usable == 0 ? T("ยังไม่พบชุดสำรองที่เสร็จสมบูรณ์ในคลังนี้") : F("พบ {0:N0} ชุดสำรอง", usable);
+        StatusText.Text = F("อ่านประวัติสำรองแล้ว · {0:N0} ชุด", usable);
     }
 
     private void ClearSnapshotList()
@@ -551,7 +553,11 @@ public partial class MainWindow : Window
             if (Directory.EnumerateFileSystemEntries(dialog.FolderName).Any()) throw new InvalidOperationException(T("กรุณาเลือกโฟลเดอร์ว่าง เพื่อแยกไฟล์ที่กู้คืนจากไฟล์เดิมอย่างชัดเจน"));
             var result = await _service.RestoreAsync(row.Id, dialog.FolderName, CreateProgress(), ct);
             CompleteTransferProgress(result.BytesRestored);
-            StatusText.Text = F("กู้คืนสำเร็จ · {0:N0} ไฟล์ · {1}", result.FilesRestored, FormatBytes(result.BytesRestored));
+            // Each warning is one file that could not be restored; never present that as a complete restore.
+            StatusText.Text = result.Warnings.Count == 0
+                ? F("กู้คืนสำเร็จ · {0:N0} ไฟล์ · {1}", result.FilesRestored, FormatBytes(result.BytesRestored))
+                : F("กู้คืนได้บางส่วน · {0:N0} ไฟล์ · {1} · กู้คืนไม่ได้ {2:N0} ไฟล์ · รายการทั้งหมดอยู่ใน {3}", result.FilesRestored, FormatBytes(result.BytesRestored), result.Warnings.Count, ApplicationService.UnrestoredReportName);
+            if (result.Warnings.Count > 0 && _closeAfterJob) ShowSettings();
             ShowWarnings(result.Warnings);
         }, releaseTransferMemory: true);
     }
@@ -646,12 +652,16 @@ public partial class MainWindow : Window
                 message += T("\n\nอ่านการตั้งค่าที่บันทึกไว้ไม่ได้ กรุณาตรวจสอบแล้วกดรีเฟรชการตั้งค่า");
             }
             StatusText.Text = T("ทำงานไม่สำเร็จ · ") + Diagnostic(ex.Message);
+            // A job that fails after its window was closed must not exit silently: a failed restore leaves a partial folder and no status record.
+            if (_closeAfterJob) ShowSettings();
             if (IsVisible) MessageBox.Show(this, message, T("ทำงานไม่สำเร็จ"), MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally
         {
             _acceptProgress = false;
             _jobElapsed.Stop();
+            // The result is final; a late Cancel click during the refresh below must not replace it with "cancelling".
+            CancelButton.IsEnabled = false;
             try { if (_loaded) await RefreshRunHistoryAsync(); }
             catch { LatestRunText.Text = T("อ่านสถานะงานล่าสุดไม่ได้ · กดรีเฟรชการตั้งค่าเพื่อลองอีกครั้ง"); }
             _jobCancellation.Dispose();

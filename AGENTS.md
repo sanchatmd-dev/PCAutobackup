@@ -1,13 +1,17 @@
 # Agent working agreement
 
 ## Communication
-- Use the `caveman` skill throughout this project, as requested by the user. Keep Thai replies concise while preserving technical facts, constraints, and necessary confirmation details. Skill source on this machine: `C:/Users/USER/.codex/skills/caveman/SKILL.md`. This preference does not compress persisted code or documentation.
+- Use the `caveman` skill throughout this project, as requested by the user. This applies to every session and team: Codex (Astra/Terra/Sol) and Claude Code (Fable/Opus/Sonnet), Root and workers alike. Keep Thai replies concise while preserving technical facts, constraints, and necessary confirmation details. Skill source on this machine: `C:/Users/USER/.codex/skills/caveman/SKILL.md`; a Claude session that does not have the skill installed reads that file at the start of the session and follows it. This preference does not compress persisted code or documentation.
 
 ## Team and model policy
 - This chat is Root: **Astra, high** (`gpt-6-astra`, high). Root owns architecture, integration, review, tests, release packaging and user communication.
 - Delegate only to **Astra medium/low**, **GPT-6.1 Terra low/medium/high**, or **GPT-6.1 Sol low/medium/high**. Do not use other models or effort levels.
 - Initial roles: Core/backup engineer = GPT-6.1 Terra high; Google integration engineer = GPT-6.1 Sol high; Windows UI engineer = GPT-6.1 Sol high.
-- Agents share this checkout. Assign disjoint file ownership. Coordinate interface changes with Root. Do not revert other agents' changes. Do not push or publish independently.
+- Claude team (use this team when the session runs in Claude Code; the Astra/Terra/Sol team above applies to Codex sessions):
+  - Root: **Claude Fable 5.2, high** (`claude-fable-5-2`, high). Same ownership as Root above.
+  - Delegate only to **Claude Opus 5.5 low/medium/high** (`claude-opus-5-5`) or **Claude Sonnet 5.5 low/medium/high** (`claude-sonnet-5-5`). Do not use other models or effort levels.
+  - Initial roles: Core/backup engineer = Opus 5.5 high; Google integration engineer = Opus 5.5 high; Windows UI engineer = Sonnet 5.5 high; adversarial review and bug reproduction = Opus 5.5 high; read-only search, measurement runs and mechanical edits = Sonnet 5.5 low/medium.
+- Agents share this checkout. Assign disjoint file ownership. Coordinate interface changes with Root. Do not revert other agents' changes. Do not push or publish independently. Agents that build or run tests in parallel work in separate git worktrees and hand Root a patch; only Root edits the main checkout.
 
 ## Product contract
 - Build a real Windows desktop backup application, not a web mockup. Google Drive is the default destination; external HDD/SSD and custom local folders are alternatives.

@@ -14,6 +14,8 @@ internal sealed class GoogleSession(AppConfiguration config, Func<Task> saveConf
 
     internal const int MaxAttempts = 6;
     internal Func<TimeSpan, CancellationToken, Task> DelayAsync { get; init; } = Task.Delay;
+    // HttpClient.Timeout stops at the response headers of a streamed download.
+    internal TimeSpan ReadIdleTimeout { get; init; } = TimeSpan.FromMinutes(3);
 
     public Task<HttpResponseMessage> SendAsync(Func<HttpRequestMessage> requestFactory, CancellationToken ct, bool retrySafe = true) =>
         SendCoreAsync(requestFactory, ct, retrySafe, authenticated: true);
@@ -79,15 +81,18 @@ internal sealed class GoogleSession(AppConfiguration config, Func<Task> saveConf
             {
                 if (string.IsNullOrWhiteSpace(config.ProtectedGoogleTokens))
                     throw new InvalidOperationException("ยังไม่ได้เชื่อมต่อ Google กรุณาเข้าสู่ระบบก่อน");
+                GoogleTokens loaded;
                 try
                 {
                     var plain = ProtectedData.Unprotect(Convert.FromBase64String(config.ProtectedGoogleTokens), null, DataProtectionScope.CurrentUser);
-                    try { tokens = JsonSerializer.Deserialize<GoogleTokens>(plain) ?? throw new CryptographicException(); }
+                    try { loaded = JsonSerializer.Deserialize<GoogleTokens>(plain) ?? throw new CryptographicException(); }
                     finally { CryptographicOperations.ZeroMemory(plain); }
                 }
                 catch (Exception ex) when (ex is CryptographicException or FormatException or JsonException)
                 { throw new InvalidOperationException("อ่านข้อมูลเข้าสู่ระบบ Google บน Windows บัญชีนี้ไม่ได้ กรุณาเชื่อมต่อใหม่", ex); }
-                GoogleAccountService.ValidateGrantedScopes(tokens.Scope);
+                // Publish only a validated grant; a rejected token must not serve the next request.
+                GoogleAccountService.ValidateGrantedScopes(loaded.Scope);
+                tokens = loaded;
             }
             if (!force && tokens.ExpiresUtc > DateTimeOffset.UtcNow.AddMinutes(2)) return tokens.AccessToken;
             using var response = await SendCoreAsync(() => new HttpRequestMessage(HttpMethod.Post, "https://oauth2.googleapis.com/token") { Content = new FormUrlEncodedContent(new Dictionary<string, string>
@@ -96,8 +101,9 @@ internal sealed class GoogleSession(AppConfiguration config, Func<Task> saveConf
                 ["refresh_token"] = tokens.RefreshToken, ["grant_type"] = "refresh_token"
             }) }, ct, retrySafe: true, authenticated: false);
             await EnsureSuccessAsync(response, ct);
-            tokens = await ReadTokenAsync(response, tokens, ct);
-            GoogleAccountService.ValidateGrantedScopes(tokens.Scope);
+            var refreshed = await ReadTokenAsync(response, tokens, ct);
+            GoogleAccountService.ValidateGrantedScopes(refreshed.Scope);
+            tokens = refreshed;
             config.ProtectedGoogleTokens = Protect(tokens);
             await saveConfiguration();
             return tokens.AccessToken;
@@ -157,17 +163,19 @@ internal sealed class GoogleSession(AppConfiguration config, Func<Task> saveConf
             _ => $"Google API ทำรายการไม่สำเร็จ (HTTP {(int)response.StatusCode})"
         };
         var reason = await ReadReasonAsync(response, ct);
-        if (reason is not null) message += " [" + reason + "]";
+        // A revoked or expired refresh token cannot recover without the user signing in again.
+        if (reason is "invalid_grant") message = "สิทธิ์ Google หมดอายุ กรุณาเชื่อมต่อบัญชีใหม่";
+        else if (reason is not null) message += " [" + reason + "]";
         // Never include response bodies, tokens, authorization codes or credential values in errors/logs.
         throw new HttpRequestException(message, null, response.StatusCode);
     }
 }
 
-internal sealed record DriveFile(string Id, string Name, long Size, DateTimeOffset ModifiedUtc, Dictionary<string, string> Properties, string[] Parents, string MimeType);
+internal sealed record DriveFile(string Id, string Name, long Size, DateTimeOffset ModifiedUtc, Dictionary<string, string> Properties, string[] Parents, string MimeType, bool Trashed = false);
 
 internal static class DriveApi
 {
-    internal const string Fields = "id,name,size,modifiedTime,appProperties,parents,mimeType";
+    internal const string Fields = "id,name,size,modifiedTime,appProperties,parents,mimeType,trashed";
     internal static string Escape(string value) => value.Replace("\\", "\\\\").Replace("'", "\\'");
     internal static async Task<List<DriveFile>> ListFilesAsync(GoogleSession session, string query, CancellationToken ct)
     {
@@ -196,7 +204,8 @@ internal static class DriveApi
         file.TryGetProperty("modifiedTime", out var modified) ? modified.GetDateTimeOffset() : DateTimeOffset.MinValue,
         file.TryGetProperty("appProperties", out var props) ? props.EnumerateObject().ToDictionary(x => x.Name, x => x.Value.GetString()!) : [],
         file.TryGetProperty("parents", out var parents) ? parents.EnumerateArray().Select(x => x.GetString()!).ToArray() : [],
-        file.GetProperty("mimeType").GetString()!);
+        file.GetProperty("mimeType").GetString()!,
+        file.TryGetProperty("trashed", out var trashed) && trashed.ValueKind == JsonValueKind.True);
 
     internal static async Task<DriveFile> GetFileAsync(GoogleSession session, string id, CancellationToken ct)
     {

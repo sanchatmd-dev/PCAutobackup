@@ -14,6 +14,16 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        // A second launch while the first is still unpacking must not copy into the same installation directory concurrently.
+        using var single = new Mutex(false, "Local\\PCAutobackup-Setup");
+        try { if (!single.WaitOne(0)) return 1; }
+        catch (AbandonedMutexException) { }
+        try { return Run(args); }
+        finally { single.ReleaseMutex(); }
+    }
+
+    private static int Run(string[] args)
+    {
         var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         var silent = args.Contains("--silent");
         var status = new TextBlock { Text = "กำลังติดตั้ง PC AutoBackup… / Installing…", TextWrapping = TextWrapping.Wrap, FontSize = 16, Margin = new Thickness(0, 0, 0, 20) };

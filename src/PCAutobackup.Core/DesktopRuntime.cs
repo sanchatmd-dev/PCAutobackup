@@ -8,11 +8,15 @@ public static class DesktopRuntime
 {
     public static string ConfigurationPath(string? path) => Path.GetFullPath(path ?? AppPaths.ConfigurationFile);
 
-    public static void EnsureTray(string applicationDirectory, string configurationPath)
+    /// <param name="skipLaunchCheck">True when the caller checks for a pending round itself, so the tray does not start a second Worker for it.</param>
+    public static void EnsureTray(string applicationDirectory, string configurationPath, bool skipLaunchCheck = false)
     {
         var executable = Path.Combine(applicationDirectory, "Tray", "PCAutobackup.Tray.exe");
         if (!File.Exists(executable)) return; // source-only development builds may not have a packaged tray
-        using var process = Start(executable, "--background", "--config", configurationPath);
+        string[] arguments = skipLaunchCheck ? ["--background", "--skip-launch-check", "--config", configurationPath] : ["--background", "--config", configurationPath];
+        // Settings and recovery must still open when a damaged or blocked tray cannot start.
+        try { using var process = Start(executable, arguments); }
+        catch (Win32Exception) { }
     }
 
     public static Process? Start(string executable, params string[] arguments)
@@ -38,7 +42,7 @@ public static class DesktopRuntime
             using var worker = Start(executable, "--scheduled", "--config", configurationPath);
             return worker is not null;
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or JsonException or Win32Exception)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or JsonException or Win32Exception or InvalidDataException)
         {
             // Keep the tray/settings available for repair. The next scheduled trigger can retry.
             return false;

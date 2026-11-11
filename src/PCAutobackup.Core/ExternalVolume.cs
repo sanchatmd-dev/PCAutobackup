@@ -20,13 +20,15 @@ public static class ExternalVolume
 
     public static string ResolvePath(string configuredPath, string volumeId)
     {
-        var oldRoot = Path.GetPathRoot(Path.GetFullPath(configuredPath))!;
+        // Slice the normalized path: a rooted remainder would make Path.Combine discard the identified drive.
+        var fullPath = Path.GetFullPath(configuredPath);
+        var relative = fullPath[Path.GetPathRoot(fullPath)!.Length..].TrimStart(Path.DirectorySeparatorChar);
         foreach (var drive in DriveInfo.GetDrives())
         {
             try
             {
                 if (drive.IsReady && string.Equals(GetIdentity(drive.RootDirectory.FullName), volumeId, StringComparison.OrdinalIgnoreCase))
-                    return Path.Combine(drive.RootDirectory.FullName, configuredPath[oldRoot.Length..]);
+                    return Path.Combine(drive.RootDirectory.FullName, relative);
             }
             catch (IOException) { }
         }

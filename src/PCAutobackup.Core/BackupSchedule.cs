@@ -11,8 +11,13 @@ public static class BackupSchedule
         if (!config.ScheduleEnabled) return false;
         var pending = lastAttempt?.Status is "Running" or "Interrupted" or "Failed"
             && (lastSuccess is null || lastAttempt.StartedUtc > lastSuccess.StartedUtc);
+        if (pending) return true;
+        var due = MostRecentDue(config, now, zone);
         // A job started before a round does not cover that round merely by ending later.
-        return pending || lastSuccess is null || lastSuccess.StartedUtc < MostRecentDue(config, now, zone);
+        // A start time after now (clock moved back) proves nothing about the current round.
+        bool Covers(RunStatus? run) => run is not null && run.StartedUtc >= due && run.StartedUtc <= now;
+        // An explicit cancellation declines its own round only; the next round is still due.
+        return !Covers(lastSuccess) && !(lastAttempt?.Status == "Cancelled" && Covers(lastAttempt));
     }
 
     public static IReadOnlyList<string> GetTimes(AppConfiguration config) =>

@@ -1,3 +1,67 @@
+## Audit ทั้งโปรเจกต์และแก้บั๊กที่ยืนยันแล้ว (2026-11-11)
+
+จุดอ้างอิง main @ 7c27c05 (Release `v2026.11.11-small-files`) การแก้ทั้งหมดอยู่ใน working tree ยังไม่ commit ไม่ push ไม่ติดตั้ง และไม่ได้ออก Release ใหม่ ใช้เฉพาะข้อมูลจำลองใน temp และ Drive จำลอง (mock) ไม่ได้เรียก Google จริง ไม่ได้รัน Worker/Desktop/Tray/ตัวติดตั้ง ตรวจหลังงาน: hash ของ `configuration.json`, `.status.json`, `.success.json`, `.scheduled-skip.json` ของเครื่องตรงกับก่อนเริ่ม, Tray PID เดิม, task 21:00 สถานะ Ready
+
+ผลตรวจก่อนแก้: `dotnet test PCAutobackup.sln -c Release` ผ่าน 256 จาก 257 ข้อที่ล้มคือ `ProgressTelemetryTests.DuplicateFileReportsProgressWhileSourceIsStillOpen` ซึ่งแข่งเวลาระหว่างการเขียน 4 MiB แบบ write-through กับการอ่านไฟล์ sparse ไม่ใช่บั๊กของแอป หลังแก้: build 0 warning/0 error และผ่าน 331/331 เครื่องนี้ไม่มี .NET SDK ระดับระบบ ใช้ SDK 10.0.403 ที่ `%LOCALAPPDATA%\PCAutobackup\dotnet-sdk`
+
+วิธีทำ: Root (Claude Fable 5.2 high) แบ่ง 7 lane ขนานกันใน worktree แยก แล้วตรวจแย้งสองรอบด้วย agent อิสระ รอบแรกกวาด Core ซ้ำ 7 มุมมอง (26 ข้อยืนยัน, 10 ข้อทำซ้ำด้วย test) รอบสองตรวจ diff รวม (37 ข้อยืนยัน ไม่มี High/Critical, 4 ข้อถูกหักล้าง) การตรวจแย้งทำซ้ำข้อเสี่ยงข้อมูลด้วย test ที่ล้มก่อนแก้
+
+### บั๊กที่ทำซ้ำได้และแก้แล้ว (เรียงตามความเสี่ยงต่อข้อมูล)
+
+- Critical: ต้นทางที่มีสองชื่อเท่ากันเมื่อไม่สนตัวพิมพ์ (โฟลเดอร์ case-sensitive, อักษรนอกตาราง upcase ของ NTFS เช่น U+10D0/U+1C90) หรือชื่อที่มี surrogate ไม่ครบคู่ ทำให้ commit manifest ที่ `ReadManifest` ปฏิเสธ ผล: รอบสำรองรายงานสำเร็จ แต่ชุดนั้นกู้ไม่ได้ รายการกู้คืนและรอบสำรองถัดไปล้มถาวร และเมื่อ retention = 0 prune ลบชุดเก่าที่ยังดีในรอบเดียวกัน แก้: ตรวจชื่อระหว่างเดินต้นทาง (`ReserveManifestPath`, `RequireOpenableName`, `RequireRestorableName`) และใช้ `ValidateManifest` ชุดเดียวกันทั้งตอนอ่านและก่อน commit
+- High: prune ลบ chunk ของ snapshot ที่รายการ `snapshots/` ตอนเริ่มรอบมองไม่เห็น (รายการ Drive ล่าช้า หรือมีผู้เขียนอีกราย) แก้: หยุดล้างเมื่อพบ manifest รหัสถูกต้องที่ไม่อยู่ในรายการตอนเริ่ม
+- High: ซ่อม orphan chunk ที่เสียแล้วไม่อ่านกลับ `LocalBackupStore.PutAsync(overwrite=false)` ถือว่าสำเร็จเมื่อชื่อเดิมยังอยู่ (ไฟล์ค้างรอลบบน exFAT/แชร์) จึง commit ชุดที่กู้ไม่ได้ แก้: อ่าน chunk กลับและเทียบก่อนนับว่าซ่อมแล้ว
+- High: การกู้คืนหยุดทั้งชุดที่ไฟล์แรกที่เสีย แก้: ข้ามเฉพาะไฟล์ที่ chunk หายหรือตรวจไม่ผ่าน รายงานใน `RestoreResult.Warnings` และไฟล์ `PCAutobackup-unrestored-files.txt` ล้มเหลวทั้งงานเฉพาะเมื่อกู้ไม่ได้เลย ข้อผิดพลาดเครือข่าย/ดิสก์/ยกเลิกยังหยุดทั้งงาน
+- High (Drive): การอ่าน body ของ `alt=media` ค้างได้ไม่มีกำหนดเพราะ `HttpClient.Timeout` จบที่ header ทำให้ Worker ถือ lock ค้าง แก้: idle timeout 3 นาทีต่อการอ่าน
+- High (Drive): โฟลเดอร์คลังในถังขยะถูกมองเป็นคลังว่าง แก้: ขอ field `trashed` และหยุดก่อนอ่าน/เขียน ยังไม่ได้ยืนยันกับ Drive จริง
+- Medium: manifest ที่อ่านไม่ได้หนึ่งชุดทำให้รายการกู้คืนทั้งหมดล้ม แก้: แสดงเป็นแถวเสียหาย ส่วนรอบสำรองยัง fail closed โดยข้อความระบุรหัสชุด
+- Medium: กู้คืน/อ่านรายการจากคลังที่เปิด `lease.lock` เพื่อเขียนไม่ได้ล้มเหลว แก้: `AcquireLease(readOnly: true)` สำหรับ list/restore เท่านั้น
+- Medium: `WriteJsonAtomicAsync` ล้มเมื่อมีผู้อ่านเปิดไฟล์ปลายทางอยู่ (Tray/Desktop อ่านสถานะ) ทำให้รอบสำรองล้มหรือ success marker หาย แก้: ลอง `File.Move` ซ้ำ 20 ครั้ง ครั้งละ 50 ms
+- Medium: success marker ที่ลงเวลาในอนาคต (นาฬิกาเดินเกินแล้วแก้กลับ) กดงานอัตโนมัติไว้จนเวลาจริงตามทัน; งานที่ผู้ใช้ยกเลิกถูกเริ่มใหม่ทันทีที่มี trigger ถัดไป แก้ใน `BackupSchedule.ShouldRun` สถานะ `Cancelled` ใช้เฉพาะเมื่อ token ของผู้เรียกถูกยกเลิก
+- Medium: snapshot ที่ขาด chunk หยุดการล้างทุกรอบและตัวมันเองไม่มีวันหมดอายุ แก้: ตรวจ chunk เฉพาะชุดที่จะเก็บไว้; การลบ chunk ไปต่อเมื่อบางรายการลบไม่ได้ แต่หยุดเมื่อเป็นความล้มเหลวของการเชื่อมต่อ; `RetentionDays` ค่าใหญ่มากไม่ทำให้การล้างล้ม
+- Medium: Desktop รัน engine บน UI thread ทำให้หน้าต่างค้างระหว่างสแกน แก้: `Task.Run` ใน `ApplicationService` เหมือนเส้นทางของ Worker
+- Medium: ปิดการตั้งเวลาไม่ได้เมื่อ task ถูกลบจากนอกแอป แก้: `WindowsScheduler.RemoveAsync` ถือว่า task ที่ไม่มีแล้วคือผลที่ต้องการ
+- Low: ข้อความ error ของชื่อที่ลงท้ายด้วยจุด/ช่องว่างชี้ผิดไฟล์; งบ retry ของ data PUT เหลือครึ่ง; token ที่ scope ไม่ครบถูกใช้กับคำขอถัดไป; `invalid_grant` ไม่บอกให้เชื่อมใหม่; OAuth loopback ล้มเมื่อมีการเชื่อมต่อเฉยหรือถูกตัด (และยังไม่เคยมี test ของ callback); `ExternalVolume.ResolvePath` กับพาธที่ไม่ normalize; Tray ล้มเมื่อ config เป็น `null` หรือ Version อื่น; ตัวติดตั้งสองตัวคัดลอกพร้อมกัน; อัปเดตเปิด autostart กลับ; `build.ps1` publish ทับโฟลเดอร์เดิม; กุญแจที่ส่งออกยังไม่ flush ลงดิสก์ก่อนเปิดสิทธิ์สำรอง; ปลายทางลิงก์ที่ลงท้ายด้วย `\` ถูกรายงานว่าไม่รวม
+- ไม่ใช่บั๊กแต่ปรับ: manifest เขียนอักขระนอก ASCII เป็น UTF-8 ตรง ๆ (รุ่นเก่าอ่านได้ และรุ่นนี้อ่าน manifest แบบ `\uXXXX` เดิมได้); รหัส chunk ใช้ string ร่วมกันข้าม manifest เพื่อลด RAM ต่อ snapshot ที่เก็บ (ยังไม่ได้วัดผลหลังแก้)
+
+Regression tests ใหม่: `AuditEngineTests`, `AuditGoogleTests`, `AuditOAuthTests`, `AuditApplicationTests`, `AuditDesktopTests`, `AuditCoverageTests` การแก้ใน Desktop/Tray/Installer/`install.ps1` ผ่านการคอมไพล์และตรวจโค้ดเท่านั้น ยังไม่ได้รันกับหน้าต่างหรือการติดตั้งจริง
+
+### ข้อความเดิมในเอกสารนี้ที่ถูกแทน
+
+- "กด X เมื่อมีงานอยู่จะซ่อนแล้วทำงานต่อจนเสร็จ": งานที่ล้มเหลวหรือกู้คืนได้บางส่วนจะเรียกหน้าต่างกลับมาและไม่ออกเอง
+- "ตัวติดตั้งสร้าง HKCU Run": การอัปเดตไม่เขียนค่ากลับเมื่อ Tray เดิมมีอยู่และค่า Run ไม่มี
+- "งานอัตโนมัติเทียบ StartedUtc ของงานสำเร็จ": เพิ่มเงื่อนไขว่าเวลาเริ่มต้องไม่อยู่ในอนาคต และการยกเลิกโดยผู้ใช้หลังเวลารอบถือว่าครอบคลุมรอบนั้น
+- "local repository ใช้ FileShare.None lease": list/restore ใช้ lease แบบอ่านร่วม หรือไม่ใช้เมื่อคลังเขียนไม่ได้ ส่วนการสำรองยังต้องได้ lease แบบ exclusive
+- ขั้นตอนของ `BackupEngine` และ Restore: เพิ่มการตรวจ manifest ก่อน commit กฎการล้างข้างต้น และการกู้คืนบางส่วน
+
+### ผลตรวจ Release และประสิทธิภาพ
+
+- Release: asset `PCAutobackup-win-x64.exe` บน GitHub มี digest `sha256:cbd81a94…5241e02b` ขนาด 206,821,105 bytes ตรงกับ `artifacts/PCAutobackup-win-x64.exe` ในเครื่อง; payload ใน installer, แพ็กเกจ 819 ไฟล์ และสำเนาที่ติดตั้งตรงกันทุกไฟล์; PDB ตรงกับ source ที่ tag; `ProductVersion` คือ `1.0.0+7c27c05…`; CI ของ commit ผ่านทั้ง main และ tag อ่านจาก GitHub API แบบไม่ล็อกอิน ไม่ได้ดาวน์โหลด asset ข้อจำกัด: exe สร้างจากเครื่องนี้ ไม่ใช่ artifact ของ CI, ไม่ได้เซ็น, build ไม่ reproducible แบบ bit-for-bit (ไม่มี `ContinuousIntegrationBuild`/PathMap, `Compress-Archive` เก็บเวลาไฟล์, ไม่มี `.gitattributes`)
+- คำขอ Drive (mock ไม่ใช่ latency จริง): 1,154 ไฟล์ สำรองครั้งแรก 3,493 คำขอ (เส้นทางเดิม 5,801) รอบไม่เปลี่ยน 20 (เดิม 1,170); 5,000 ไฟล์ ครั้งแรก 15,079 รอบไม่เปลี่ยน 39 กู้คืน 9,903 ตัวเลขในเอกสาร 5,798 → 3,494 และ 1,172 → 25 ทำซ้ำได้ตรงเมื่อแบ่ง 3 หน้าต่อรายการ กู้คืนตรง SHA-256 ทุกไฟล์ทุกกรณี pagination ครบ
+- Local store 20,000 ไฟล์ 174 MB บนเครื่องที่มีโหลดจากงานอื่น: สำรองครั้งแรก 740 วินาที รอบไม่เปลี่ยน 426 วินาที กู้คืน 430 วินาที peak working set ของ test host 88–118 MB manifest 209.7 bytes ต่อไฟล์ เวลาแกว่งมาก (กู้คืน 5,000 ไฟล์ชุดเดียวกันวัดได้ 45–159 วินาที) จึงไม่ใช้สรุปความเร็ว ชุด 100,000 ไฟล์จริงไม่ได้รัน
+- คอขวดที่วัดได้: `CheckReparse` เดินทุกชั้นพาธกินเวลา 56–73% ต่อไฟล์ในรอบไม่เปลี่ยน; กู้คืนไฟล์เล็กจาก Drive ทำทีละคำขอ; `ListAsync` ของ Drive อ่านทั้งคลังทุกครั้ง 5 รอบต่อรอบสำรอง; ต่ำกว่า 1,024 chunk ยังค้นทีละชื่อ; ทุกรอบอ่าน manifest ที่เก็บไว้ทั้งหมด
+
+### ยังตรวจไม่ได้
+
+- Google Drive จริง: ไม่ได้ทดสอบเลยในงานนี้ รวมถึงพฤติกรรมของโฟลเดอร์ในถังขยะ ความครบของ `name contains` และรายการที่ล่าช้า
+- จำนวนวัตถุในคลัง Drive จริงของเครื่องนี้ เทียบกับเพดาน 500,000 รายการต่อโฟลเดอร์
+- การแก้ฝั่ง Desktop/Tray/Installer/`install.ps1` ในการใช้งานจริง และ sleep/resume/reboot
+- สื่อ write-protected จริง (ทดสอบด้วย attribute read-only), exFAT/FAT32, ไฟดับ
+- บรรทัดสรุปจำนวน test ใน log ของ CI (ต้องล็อกอิน GitHub)
+
+### งานที่ควรทำต่อ (เรียงตามความเสี่ยงต่อข้อมูลและการกู้คืน)
+
+1. นับวัตถุในโฟลเดอร์คลัง Drive จริง แล้วออกแบบการแบ่ง chunk เป็นโฟลเดอร์ย่อยพร้อมเส้นทางย้ายคลังเดิม ก่อนถึง 500,000 รายการ
+2. ตัดสินใจนโยบาย: ลิงก์ที่ชี้ออกนอกต้นทางทำให้ไม่ล้างประวัติทุกรอบ ซึ่งรวม junction มาตรฐาน `My Music`/`My Pictures`/`My Videos` ใน Documents
+3. chunk ที่ snapshot เก่าอ้างถึงยังไม่ถูกตรวจซ้ำ แม้ขนาดที่ Drive รายงานจะผิด ควรตรวจและซ่อมเมื่อมี byte ต้นทางที่ถูกต้องอยู่ในมือ และเพิ่ม scrub
+4. คำสั่งลบหรือกัก snapshot ที่เสียจากในแอป และทางแทนที่กุญแจ DPAPI ที่ถอดไม่ได้ด้วยไฟล์ `.pcakey` โดยไม่เสีย DeviceId
+5. `install.ps1` คัดลอกทับที่เดิมโดยไม่มี staging/rollback และ Worker ตามตารางอาจเริ่มระหว่างคัดลอก
+6. งานที่ล้มเหลวถาวรถูกลองใหม่ทุก trigger โดยไม่มี backoff; Worker ถือ config lock ตลอดรอบ ทำให้บันทึกค่า/กู้คืนจาก Desktop ไม่ได้หลายชั่วโมง
+7. ต้นทางที่สลับเป็นดิสก์อื่นหรือว่างเปล่ายังถูกสำรองเป็นชุดว่างและนับ retention; การย้ายไฟล์ระหว่างเดินต้นทางไม่ถูกตรวจจับ; นาฬิกากระโดดไปข้างหน้าทำให้ประวัติหมดอายุทั้งชุด
+8. Release: สร้างและแนบ asset จาก CI พร้อม hash, ทำ build ให้ reproducible, เซ็นโค้ด, pin action ด้วย SHA
+9. ประสิทธิภาพ: กู้คืนไฟล์เล็กแบบขนานข้ามไฟล์, ลดการเดิน ancestor ซ้ำ, รายการ `snapshots/` แบบไม่อ่านทั้งคลัง, เก็บสรุป manifest แทนการอ่านทุกชุดทุกรอบ
+10. Test ที่ยังพึ่งเวลา/นาฬิกาจริง (`RecoveryLifecycleTests` ล้มหนึ่งครั้งภายใต้โหลด, ขอบเวลา 21:00, การอ่าน log วิเคราะห์ร่วมกัน)
+
 ## แก้ MIME identity-conflict (2026-11-10)
 
 - ตรวจ metadata แบบอ่านอย่างเดียวโดย uploadId จาก log รอบ 02:19 ที่ล้มเหลว พบ 1 วัตถุในคลังจริง: `mimeType=image/jp2`, parent/pcabRole/uploadId/name canonical ตรง และ AES-GCM decrypt + HMAC chunk-name ผ่าน ไม่ได้เขียนหรือกู้คืนไฟล์จริงลงดิสก์
@@ -264,3 +328,10 @@ Progress featureติดตั้งในเครื่องแล้ว Cor
 ผล A/B Drive จริงบนไฟล์จำลอง 1,154 ไฟล์ 786,116 bytes และ Junction 3 จุด สำรองครั้งแรก 5,798 → 3,494 คำขอ 249.99 → 193.44 วินาที รอบไฟล์ไม่เปลี่ยน 1,172 → 25 คำขอ 40.59 → 20.57 วินาที กู้คืนด้วยรุ่นใหม่ทั้ง snapshot ใหม่และ snapshot รุ่นเดิมครบและตรงทุก byte ตรวจ alias ไม่พบรายการซ้ำ มีรายละเอียดวิธีวัดและ peak working set ใน docs/drive-small-files-2026-11-11.md
 
 ติดตั้งรุ่น multipart เมื่อ 11 พฤศจิกายน 2026 เวลา 10:47:43 ตรวจไฟล์ 819/819 ตรงแพ็กเกจ Core C274A08B88C564B51DD162790E98906D3AE17768E0139C85156DB9482590A8F5 คง configuration, startup, scheduler XML, status และ success marker เดิม ตาราง 21:00 เปิด Tray ข้ามการตรวจงานค้างเฉพาะตอนเปิดครั้งนี้ ไม่เริ่มรอบจริง รายงานติดตั้ง %TEMP%/PCAutobackup-install-small-multipart-10940ca7a657415cacd24b3fe8629a62/verification.json
+
+## Codex review หลังรับ handoff (2026-11-11)
+ตรวจ diff งาน Claude และแก้เพิ่มสามจุด: partial-restore report ไม่เขียนทับ/ไม่กลืน error, ตรวจ task ที่หายด้วย HRESULT เฉพาะแทน exit code ทั่วไป, และปฏิเสธ build output ที่ผ่าน Junction ก่อนลบแพ็กเกจ Tests 336/336; solution และ installer build ผ่าน 0 warnings/errors ทดสอบ Google Drive จริงด้วยคลังจำลองใหม่ 34 ไฟล์และ Junction 3 จุด สำรองสองรอบ กู้คืนตรงทุก byte ไม่มีชื่อวัตถุซ้ำและไม่มี chunk upload ซ้ำในรอบ unchanged ค่าตั้งจริง hash เดิม ยังไม่ push หรือติดตั้ง ดู `docs/claude-audit-review-2026-11-11.md` สำหรับหลักฐานและข้อจำกัด
+
+UI/installer QA รอบ 2026-11-11 ยังไม่ครบ: UI backup และ history ผ่านบน config จำลอง; restore dialog ถูกบล็อกด้วยข้อจำกัด computer-use; install helper busy guard ผ่าน แต่ clean install/upgrade ต้องใช้ Windows แยก ตรวจ config/task/startup/installed Core จริงยังเดิม Worker ไม่ถูกหยุด ดู docs/ui-installer-qa-2026-11-11.md ยังไม่พร้อมรับรอง release และยังไม่ push/install
+
+เตรียม Windows Sandbox kit แล้วตามคำขอ: artifacts/WindowsSandbox-QA/Start-QA.wsb พร้อม candidate installer สร้างใหม่, self-contained synthetic fixture และ runner ที่ map Input read-only/Results writable ปิด network/clipboard ตรวจ XML/PowerShell syntax และ Core hash ตรงกัน ยังไม่ได้รัน Sandbox เพราะเครื่องนี้ยังไม่มีตัวเรียกใช้งาน ดู docs/windows-sandbox-qa-th.md ห้ามนับ packaging เป็นผลผ่าน installer/UI

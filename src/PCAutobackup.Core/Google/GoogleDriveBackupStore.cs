@@ -119,6 +119,10 @@ public sealed class GoogleDriveBackupStore : IBackupStore, IAuthenticatedChunkSt
             var existing = await DriveApi.GetFileAsync(session, config.GoogleRootFolderId, ct);
             if (existing.MimeType != "application/vnd.google-apps.folder" || existing.Properties.GetValueOrDefault("pcabRole") != "repository-v1")
                 throw new InvalidOperationException("โฟลเดอร์ Google Drive นี้ไม่ใช่คลัง PC AutoBackup ที่รองรับ");
+            // Children of a trashed folder are hidden from every trashed=false listing. Never
+            // treat that as an empty repository or write new objects into the trash.
+            if (existing.Trashed)
+                throw new InvalidOperationException("คลังสำรองนี้อยู่ในถังขยะของ Google Drive กรุณากู้คืนโฟลเดอร์จากถังขยะก่อนใช้งาน");
             folder = existing.Id;
         }
         else
@@ -146,7 +150,7 @@ public sealed class GoogleDriveBackupStore : IBackupStore, IAuthenticatedChunkSt
         try
         {
             await GoogleSession.EnsureSuccessAsync(response, ct);
-            return new ResponseStream(await response.Content.ReadAsStreamAsync(ct), response);
+            return new ResponseStream(await response.Content.ReadAsStreamAsync(ct), response, session.ReadIdleTimeout);
         }
         catch { response.Dispose(); throw; }
     }
@@ -397,10 +401,11 @@ public sealed class GoogleDriveBackupStore : IBackupStore, IAuthenticatedChunkSt
             }
             catch (HttpRequestException) { /* Resolve ambiguous acknowledgement through the existing session. */ }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested) { /* HTTP timeout; probe before retrying data. */ }
+            var probed = false;
             if (response is null || (int)response.StatusCode is 408 or 429 || (int)response.StatusCode >= 500 ||
                 response.StatusCode == HttpStatusCode.Forbidden && await GoogleSession.ReadReasonAsync(response, ct) is "rateLimitExceeded" or "userRateLimitExceeded")
             {
-                recoveredRequest = true;
+                recoveredRequest = probed = true;
                 var delay = response?.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(Math.Pow(2, stalled));
                 response?.Dispose();
                 if (++stalled > 4) throw new IOException("Google Drive ไม่ยืนยันสถานะอัปโหลดหลังลองซ้ำแล้ว");
@@ -415,7 +420,8 @@ public sealed class GoogleDriveBackupStore : IBackupStore, IAuthenticatedChunkSt
                 {
                     var next = GetAcknowledgedOffset(response);
                     if (next < offset || next > offset + needed || next >= length) throw new IOException("Google คืนช่วงข้อมูลอัปโหลดที่ไม่ถูกต้อง");
-                    stalled = next == offset ? stalled + 1 : 0;
+                    // The failed request already used one retry; its no-progress probe is not a second stall.
+                    stalled = next != offset ? 0 : probed ? stalled : stalled + 1;
                     if (stalled > 4) throw new IOException("Google Drive ไม่รับข้อมูลอัปโหลดเพิ่มเติม");
                     offset = next;
                 }
@@ -567,7 +573,7 @@ public sealed class GoogleDriveBackupStore : IBackupStore, IAuthenticatedChunkSt
             using var response = await session.SendAsync(() => new HttpRequestMessage(HttpMethod.Get,
                 "https://www.googleapis.com/drive/v3/files/" + Uri.EscapeDataString(file.Id) + "?alt=media"), ct);
             await GoogleSession.EnsureSuccessAsync(response, ct);
-            await using var input = await response.Content.ReadAsStreamAsync(ct);
+            await using var input = new ResponseStream(await response.Content.ReadAsStreamAsync(ct), response, session.ReadIdleTimeout);
             using var memory = new MemoryStream();
             var buffer = new byte[65536];
             int read;
@@ -626,7 +632,7 @@ public sealed class GoogleDriveBackupStore : IBackupStore, IAuthenticatedChunkSt
         return ValueTask.CompletedTask;
     }
 
-    private sealed class ResponseStream(Stream inner, HttpResponseMessage response) : Stream
+    private sealed class ResponseStream(Stream inner, HttpResponseMessage response, TimeSpan idleTimeout) : Stream
     {
         public override bool CanRead => inner.CanRead;
         public override bool CanSeek => false;
@@ -635,8 +641,17 @@ public sealed class GoogleDriveBackupStore : IBackupStore, IAuthenticatedChunkSt
         public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
         public override void Flush() => throw new NotSupportedException();
         public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
-        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) => inner.ReadAsync(buffer, cancellationToken);
-        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => inner.ReadAsync(buffer, offset, count, cancellationToken);
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            // The HTTP timeout ended at the response headers. A connection that goes silent
+            // must fail this read, not hold the backup or restore and its locks forever.
+            using var idle = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            idle.CancelAfter(idleTimeout);
+            try { return await inner.ReadAsync(buffer, idle.Token); }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            { throw new IOException("Google Drive หยุดส่งข้อมูลระหว่างดาวน์โหลด กรุณาลองใหม่อีกครั้ง"); }
+        }
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();

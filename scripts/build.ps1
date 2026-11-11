@@ -7,6 +7,21 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repoRoot "artifacts\PCAutobackup-$Runtime" }
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+function Assert-NoOutputReparsePoint([string]$Path) {
+    for ($current = $Path; $current; $current = [IO.Path]::GetDirectoryName($current)) {
+        if ((Test-Path -LiteralPath $current) -and ((Get-Item -LiteralPath $current -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "Build output path contains a reparse point: $current"
+        }
+    }
+}
+Assert-NoOutputReparsePoint $OutputDirectory
+# Publishing over an earlier package would ship files that no longer belong to the build.
+# Only a package directory below artifacts\ is replaced; any other non-empty directory is refused and left untouched.
+$replaceOutput = (Test-Path -LiteralPath $OutputDirectory) -and @(Get-ChildItem -LiteralPath $OutputDirectory -Force).Count
+if ($replaceOutput) {
+    $artifacts = (Join-Path $repoRoot 'artifacts') + [IO.Path]::DirectorySeparatorChar
+    if (-not $OutputDirectory.TrimEnd([IO.Path]::DirectorySeparatorChar).StartsWith($artifacts, [StringComparison]::OrdinalIgnoreCase)) { throw "Output directory is not empty: $OutputDirectory. Use a new or empty directory." }
+}
 $localSdk = Join-Path $env:LOCALAPPDATA 'PCAutobackup\dotnet-sdk\dotnet.exe'
 $dotnetCommand = if (Test-Path -LiteralPath $localSdk) { $localSdk } else { 'dotnet' }
 Push-Location $repoRoot
@@ -15,6 +30,9 @@ try {
         & $dotnetCommand test 'tests/PCAutobackup.Tests/PCAutobackup.Tests.csproj' -c Release --nologo
         if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
     }
+    # The earlier package stays until the tests have passed.
+    Assert-NoOutputReparsePoint $OutputDirectory
+    if ($replaceOutput) { [IO.Directory]::Delete($OutputDirectory, $true) }
     & $dotnetCommand publish 'src/PCAutobackup.Desktop/PCAutobackup.Desktop.csproj' -c Release -r $Runtime --self-contained true -o $OutputDirectory -p:PublishSingleFile=false
     if ($LASTEXITCODE -ne 0) { throw 'Desktop publish failed.' }
     & $dotnetCommand publish 'src/PCAutobackup.Worker/PCAutobackup.Worker.csproj' -c Release -r $Runtime --self-contained true -o (Join-Path $OutputDirectory 'Worker') -p:PublishSingleFile=false

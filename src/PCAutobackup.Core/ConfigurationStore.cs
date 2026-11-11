@@ -70,7 +70,15 @@ public static class ConfigurationStore
                 stream.Flush(true);
             }
             ct.ThrowIfCancellationRequested();
-            File.Move(temporary, path, true);
+            // Windows refuses to replace a file while any reader still has it open, even one that
+            // shares delete access. Readers hold these files for milliseconds, so wait briefly.
+            for (var attempt = 1; ; attempt++)
+            {
+                try { File.Move(temporary, path, true); break; }
+                catch (Exception e) when (attempt < 20 && !Directory.Exists(path)
+                    && (e is UnauthorizedAccessException || e is IOException && (e.HResult & 0xffff) is 32 or 33))
+                { await Task.Delay(50, CancellationToken.None); }
+            }
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
