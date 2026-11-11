@@ -319,6 +319,17 @@
   "ไทย (ค่าเริ่มต้น)": "ไทย (default)",
   "พบวัตถุจากงานอื่นระหว่างเริ่มอัปโหลดใหม่ หยุดเพื่อป้องกันข้อมูลซ้ำ": "Another writer's object appeared while restarting the upload; stopped to prevent duplicates.",
   "Google Drive upload session ใช้งานไม่ได้หลังเริ่มใหม่ครบจำนวนครั้งแล้ว": "Google Drive upload session remains unavailable after the bounded restarts.",
+  "ข้ามลิงก์ โดยสำรองปลายทางผ่านเส้นทางจริงแล้ว: ": "Skipped link; target backed up through its original path: ",
+  "ข้ามลิงก์ โดยปลายทางไม่รวมอยู่ในชุดสำรองนี้: ": "Skipped link; target is not included in this snapshot: ",
+  "เก็บชุดสำรองเก่าไว้ เนื่องจากไม่ได้รวมปลายทางลิงก์บางรายการ จึงข้ามการล้างตามอายุและโควตา": "Previous snapshots retained because some link targets were not included; retention and quota cleanup were skipped.",
   "ข้ามเพราะมีงานกำลังทำอยู่": "Skipped because another job is running",
-  "รอบอัตโนมัติที่ข้ามล่าสุด · {0} · {1}": "Last skipped scheduled attempt · {0} · {1}"
+  "รอบอัตโนมัติที่ข้ามล่าสุด · {0} · {1}": "Last skipped scheduled attempt · {0} · {1}",
+  "คำขอ Google ไม่สำเร็จ: ": "Google request failed: ",
+  "Google คืนรหัสไฟล์ที่จองไว้เป็นค่าว่าง": "Google returned an empty reserved file ID",
+  "Google ไม่ได้คืนรหัสไฟล์ที่จองไว้": "Google returned no reserved file IDs",
+  "Google Drive คืนวัตถุยืนยันที่ไม่ตรงกับคลังสำรอง": "Google Drive returned a confirmation object outside the expected repository identity.",
+  "Google Drive ยังไม่ยืนยันวัตถุที่อัปโหลดหลังรอตรวจซ้ำครบจำนวนครั้งแล้ว": "Google Drive could not confirm the uploaded object after all bounded confirmation checks.",
+  "Google Drive คืนวัตถุยืนยันที่ไม่ตรงกับคลังสำรอง: ": "Google Drive confirmation identity mismatched fields: ",
+  "วัตถุสำรองมี mimeType ที่ไม่รองรับ": "Backup object has an unsupported mimeType.",
+  "ข้อมูลสำรองเดิมหายไปหรือขนาดเปลี่ยนก่อนบันทึกชุดสำรองใหม่": "An existing backup chunk was missing or had a different size before the new snapshot could be saved."
 }

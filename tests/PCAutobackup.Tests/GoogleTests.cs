@@ -7,7 +7,7 @@ using PCAutobackup.Core.Google;
 
 namespace PCAutobackup.Tests;
 
-public sealed class GoogleTests
+public sealed partial class GoogleTests
 {
     private const string Scopes = "openid email https://www.googleapis.com/auth/drive.file";
 
@@ -272,19 +272,22 @@ public sealed class GoogleTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task AmbiguousCreateDoesNotRestartSession(bool optimize)
+    public async Task AmbiguousCreateExhaustsBoundedRetriesWithStableId(bool optimize)
     {
-        var creates = 0;
-        using var http = new HttpClient(new Handler(request =>
+        var creates = 0; string? id = null;
+        using var http = new HttpClient(new Handler(async request =>
         {
-            if (request.Method == HttpMethod.Get) return Task.FromResult(Json(new { files = Array.Empty<object>() }));
+            if (request.Method == HttpMethod.Get) return Json(new { files = Array.Empty<object>() });
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+            var nextId = body.RootElement.GetProperty("id").GetString();
+            id ??= nextId; Assert.Equal(id, nextId);
             creates++;
             throw new HttpRequestException("Synthetic uncertain create");
         }));
-        await using var store = new GoogleDriveBackupStore(new GoogleSession(Config(), () => Task.CompletedTask, http), "synthetic-repo", optimizeChunkUploads: optimize);
+        await using var store = new GoogleDriveBackupStore(new GoogleSession(Config(), () => Task.CompletedTask, http) { DelayAsync = (_, _) => Task.CompletedTask }, "synthetic-repo", optimizeChunkUploads: optimize);
         using var content = new MemoryStream([1, 2, 3]);
         await Assert.ThrowsAsync<HttpRequestException>(() => store.PutAsync("chunks/a", content));
-        Assert.Equal(1, creates);
+        Assert.Equal(GoogleSession.MaxAttempts, creates);
     }
 
     [Fact]
@@ -797,6 +800,9 @@ public sealed class GoogleTests
     private static HttpResponseMessage Json(object value) => new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json") };
     private sealed class Handler(Func<HttpRequestMessage, Task<HttpResponseMessage>> handler) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => handler(request);
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            request.RequestUri!.AbsolutePath.EndsWith("/generateIds")
+                ? Task.FromResult(Json(new { ids = Enumerable.Range(0, 100).Select(_ => Guid.NewGuid().ToString("N")).ToArray() }))
+                : handler(request);
     }
 }

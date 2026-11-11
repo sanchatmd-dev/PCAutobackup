@@ -216,6 +216,7 @@ public sealed class ApplicationService
                 if (!Configuration.RecoveryKeyAcknowledged) throw new InvalidOperationException("กรุณาส่งออกและเก็บกุญแจกู้คืนไว้นอกเครื่องก่อนเริ่มสำรอง");
                 key = GetKey();
                 await ConfigurationStore.WriteJsonAtomicAsync(StatusPath, status, ct);
+                GoogleDiagnostics.Write("backup-round", status.StartedUtc.ToString("O"), 1, "started");
                 await using var store = await OpenStoreAsync(false, ct);
                 using var repositoryLock = OperationLock.Acquire(RepositoryIdentity(false));
                 using var localLease = (store as LocalBackupStore)?.AcquireLease();
@@ -242,6 +243,7 @@ public sealed class ApplicationService
                 status.BytesProcessed = result.TotalBytes;
                 status.CompletedUtc = timeProvider.GetUtcNow();
                 status.PeakWorkingSetBytes = Process.GetCurrentProcess().PeakWorkingSet64;
+                GoogleDiagnostics.Write("backup-round", status.StartedUtc.ToString("O"), 1, "succeeded");
                 try
                 {
                     await ConfigurationStore.WriteJsonAtomicAsync(StatusPath, status);
@@ -258,6 +260,7 @@ public sealed class ApplicationService
             }
             catch (Exception e)
             {
+                GoogleDiagnostics.Write("backup-round", status.StartedUtc.ToString("O"), 1, "failed", e);
                 status.Status = e is OperationCanceledException ? "Cancelled" : "Failed";
                 status.Message = SafeError(e);
                 status.CompletedUtc = timeProvider.GetUtcNow();

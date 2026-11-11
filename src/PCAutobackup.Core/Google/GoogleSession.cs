@@ -12,35 +12,61 @@ internal sealed class GoogleSession(AppConfiguration config, Func<Task> saveConf
     private readonly SemaphoreSlim refreshLock = new(1, 1);
     private GoogleTokens? tokens;
 
-    public async Task<HttpResponseMessage> SendAsync(Func<HttpRequestMessage> requestFactory, CancellationToken ct, bool retrySafe = true)
+    internal const int MaxAttempts = 6;
+    internal Func<TimeSpan, CancellationToken, Task> DelayAsync { get; init; } = Task.Delay;
+
+    public Task<HttpResponseMessage> SendAsync(Func<HttpRequestMessage> requestFactory, CancellationToken ct, bool retrySafe = true) =>
+        SendCoreAsync(requestFactory, ct, retrySafe, authenticated: true);
+
+    private async Task<HttpResponseMessage> SendCoreAsync(Func<HttpRequestMessage> requestFactory, CancellationToken ct, bool retrySafe, bool authenticated)
     {
-        for (var attempt = 0; ; attempt++)
+        var requestId = Guid.NewGuid().ToString("N");
+        for (var attempt = 1; ; attempt++)
         {
-            var accessToken = await GetAccessTokenAsync(false, ct);
+            ct.ThrowIfCancellationRequested();
+            var accessToken = authenticated ? await GetAccessTokenAsync(false, ct) : null;
             using var request = requestFactory();
-            request.Headers.Authorization = new("Bearer", accessToken);
+            if (authenticated) request.Headers.Authorization = new("Bearer", accessToken);
+            var operation = !authenticated ? "oauth-refresh" : request.RequestUri!.AbsolutePath.Contains("generateIds") ? "generate-ids" :
+                request.RequestUri.AbsolutePath.StartsWith("/upload/") ? request.Method == HttpMethod.Put ? "upload-data-or-probe" :
+                    request.RequestUri.Query.Contains("uploadType=multipart", StringComparison.Ordinal) ? "upload-multipart" : "upload-init" :
+                request.Method == HttpMethod.Get ? "drive-read" : request.Method == HttpMethod.Delete ? "drive-delete" : "drive-metadata-write";
             HttpResponseMessage response;
-            try { response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct); }
-            catch (HttpRequestException) when (retrySafe && attempt < 4)
+            try { response = await http.SendAsync(request, request.RequestUri!.Query.Contains("alt=media", StringComparison.Ordinal) ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead, ct); }
+            catch (Exception e) when (e is HttpRequestException || e is OperationCanceledException && !ct.IsCancellationRequested)
             {
-                await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), ct);
+                var retry = retrySafe && attempt < MaxAttempts;
+                var delay = Backoff(attempt, null);
+                GoogleDiagnostics.Write(operation, requestId, attempt, retry ? "retry-transport" : "transport-failed", e, delaySeconds: retry ? delay.TotalSeconds : null);
+                if (!retry) throw new HttpRequestException($"คำขอ Google ไม่สำเร็จ: operation={operation}; request={requestId}; attempts={attempt}; cause={e.GetType().Name}", e);
+                await DelayAsync(delay, ct);
                 continue;
             }
-            if (response.StatusCode == HttpStatusCode.Unauthorized && attempt < 4)
+            if (response.StatusCode == HttpStatusCode.Unauthorized && authenticated && attempt < MaxAttempts)
             {
+                GoogleDiagnostics.Write(operation, requestId, attempt, "refresh-auth", status: 401);
                 response.Dispose();
                 await GetAccessTokenAsync(true, ct);
                 continue;
             }
-            if (retrySafe && ((int)response.StatusCode == 429 || (int)response.StatusCode >= 500) && attempt < 4)
+            if (retrySafe && ((int)response.StatusCode is 408 or 429 || (int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.Forbidden && await ReadReasonAsync(response, ct) is "rateLimitExceeded" or "userRateLimitExceeded") && attempt < MaxAttempts)
             {
-                var delay = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(Math.Pow(2, attempt));
+                var delay = Backoff(attempt, response);
+                GoogleDiagnostics.Write(operation, requestId, attempt, "retry-http", status: (int)response.StatusCode, delaySeconds: delay.TotalSeconds);
                 response.Dispose();
-                await Task.Delay(delay > TimeSpan.FromSeconds(30) ? TimeSpan.FromSeconds(30) : delay, ct);
+                await DelayAsync(delay, ct);
                 continue;
             }
+            if ((!response.IsSuccessStatusCode && (int)response.StatusCode != 308) || attempt > 1)
+                GoogleDiagnostics.Write(operation, requestId, attempt, response.IsSuccessStatusCode ? "recovered" : "http-result", status: (int)response.StatusCode);
             return response;
         }
+    }
+
+    private static TimeSpan Backoff(int attempt, HttpResponseMessage? response)
+    {
+        var requested = response?.Headers.RetryAfter?.Delta ?? (response?.Headers.RetryAfter?.Date - DateTimeOffset.UtcNow);
+        return TimeSpan.FromSeconds(Math.Clamp(requested?.TotalSeconds ?? Math.Pow(2, attempt - 1) + Random.Shared.NextDouble(), 0, 60));
     }
 
     private async Task<string> GetAccessTokenAsync(bool force, CancellationToken ct)
@@ -64,11 +90,11 @@ internal sealed class GoogleSession(AppConfiguration config, Func<Task> saveConf
                 GoogleAccountService.ValidateGrantedScopes(tokens.Scope);
             }
             if (!force && tokens.ExpiresUtc > DateTimeOffset.UtcNow.AddMinutes(2)) return tokens.AccessToken;
-            using var response = await http.PostAsync("https://oauth2.googleapis.com/token", new FormUrlEncodedContent(new Dictionary<string, string>
+            using var response = await SendCoreAsync(() => new HttpRequestMessage(HttpMethod.Post, "https://oauth2.googleapis.com/token") { Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["client_id"] = config.GoogleClientId, ["client_secret"] = config.GoogleClientSecret,
                 ["refresh_token"] = tokens.RefreshToken, ["grant_type"] = "refresh_token"
-            }), ct);
+            }) }, ct, retrySafe: true, authenticated: false);
             await EnsureSuccessAsync(response, ct);
             tokens = await ReadTokenAsync(response, tokens, ct);
             GoogleAccountService.ValidateGrantedScopes(tokens.Scope);
@@ -99,10 +125,30 @@ internal sealed class GoogleSession(AppConfiguration config, Func<Task> saveConf
         return new(access, refresh, DateTimeOffset.UtcNow.AddSeconds(root.GetProperty("expires_in").GetInt32()), scope);
     }
 
-    internal static Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken ct)
+    internal static async Task<string?> ReadReasonAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.Content.Headers.ContentLength > 16384) return null;
+        try
+        {
+            var text = await response.Content.ReadAsStringAsync(ct);
+            if (text.Length > 16384 || text.Length == 0) return null;
+            using var document = JsonDocument.Parse(text);
+            if (!document.RootElement.TryGetProperty("error", out var error)) return null;
+            if (error.ValueKind == JsonValueKind.String)
+                return error.GetString() is "invalid_grant" ? "invalid_grant" : null;
+            if (error.ValueKind != JsonValueKind.Object || !error.TryGetProperty("errors", out var errors) || errors.ValueKind != JsonValueKind.Array) return null;
+            foreach (var item in errors.EnumerateArray())
+                if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty("reason", out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is string reason &&
+                    reason is "rateLimitExceeded" or "userRateLimitExceeded" or "storageQuotaExceeded" or "dailyLimitExceeded" or "insufficientFilePermissions" or "authError") return reason;
+        }
+        catch (JsonException) { }
+        return null;
+    }
+
+    internal static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        if (response.IsSuccessStatusCode) return Task.CompletedTask;
+        if (response.IsSuccessStatusCode) return;
         var message = response.StatusCode switch
         {
             HttpStatusCode.Unauthorized => "สิทธิ์ Google หมดอายุ กรุณาเชื่อมต่อบัญชีใหม่",
@@ -110,6 +156,8 @@ internal sealed class GoogleSession(AppConfiguration config, Func<Task> saveConf
             HttpStatusCode.NotFound => "ไม่พบข้อมูล Google Drive ที่เลือก กรุณาตรวจสอบบัญชีและคลังสำรอง",
             _ => $"Google API ทำรายการไม่สำเร็จ (HTTP {(int)response.StatusCode})"
         };
+        var reason = await ReadReasonAsync(response, ct);
+        if (reason is not null) message += " [" + reason + "]";
         // Never include response bodies, tokens, authorization codes or credential values in errors/logs.
         throw new HttpRequestException(message, null, response.StatusCode);
     }

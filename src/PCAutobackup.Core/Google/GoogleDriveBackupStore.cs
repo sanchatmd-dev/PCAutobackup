@@ -7,7 +7,7 @@ using System.Text.Json;
 namespace PCAutobackup.Core.Google;
 
 /// <summary>A dedicated marked Drive folder. Only marked encrypted repository objects may be modified.</summary>
-public sealed class GoogleDriveBackupStore : IBackupStore
+public sealed class GoogleDriveBackupStore : IBackupStore, IAuthenticatedChunkStore
 {
     private const string ObjectRole = "object-v1";
     private readonly GoogleSession session;
@@ -16,18 +16,55 @@ public sealed class GoogleDriveBackupStore : IBackupStore
     private readonly SemaphoreSlim mutationSlots;
     private readonly SemaphoreSlim[] chunkNameLocks;
     private readonly bool optimizeChunkUploads;
+    internal bool UseSmallChunkMultipart { get; }
+    internal const int SmallChunkPlaintextLimit = 256 * 1024;
+    internal const int TrustedInventoryThreshold = 1024;
     private readonly int maxConcurrentMutations;
     private const int OptimizedChunkLimit = 4 * 1024 * 1024 + 32;
     private readonly Dictionary<string, DriveFile> lookupCache = new(StringComparer.Ordinal);
     private readonly Queue<string> cacheOrder = new();
     private const int CacheLimit = 2048;
+    private Func<string, byte[], bool>? chunkVerifier;
 
-    internal GoogleDriveBackupStore(GoogleSession session, string folderId, bool optimizeChunkUploads = false, int maxConcurrentMutations = 1)
+    void IAuthenticatedChunkStore.SetChunkVerifier(Func<string, byte[], bool> verifier)
+    {
+        // Verification is key-specific; never reuse a selection made by another engine.
+        lock (lookupCache) { lookupCache.Clear(); cacheOrder.Clear(); chunkVerifier = verifier; }
+    }
+    private readonly SemaphoreSlim idLock = new(1, 1);
+    private readonly Queue<string> reservedIds = new();
+
+    private async Task<string> ReserveIdAsync(CancellationToken ct)
+    {
+        await idLock.WaitAsync(ct);
+        try
+        {
+            if (reservedIds.Count == 0)
+            {
+                using var response = await session.SendAsync(() => new(HttpMethod.Get,
+                    "https://www.googleapis.com/drive/v3/files/generateIds?count=100&space=drive&type=files"), ct);
+                await GoogleSession.EnsureSuccessAsync(response, ct);
+                using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
+                foreach (var id in json.RootElement.GetProperty("ids").EnumerateArray())
+                {
+                    var value = id.GetString();
+                    if (string.IsNullOrWhiteSpace(value)) throw new IOException("Google คืนรหัสไฟล์ที่จองไว้เป็นค่าว่าง");
+                    reservedIds.Enqueue(value);
+                }
+                if (reservedIds.Count == 0) throw new IOException("Google ไม่ได้คืนรหัสไฟล์ที่จองไว้");
+            }
+            return reservedIds.Dequeue();
+        }
+        finally { idLock.Release(); }
+    }
+
+    internal GoogleDriveBackupStore(GoogleSession session, string folderId, bool optimizeChunkUploads = false, int maxConcurrentMutations = 1, bool useSmallChunkMultipart = false)
     {
         if (maxConcurrentMutations is < 1 or > 32) throw new ArgumentOutOfRangeException(nameof(maxConcurrentMutations));
         this.session = session;
         this.folderId = folderId;
         this.optimizeChunkUploads = optimizeChunkUploads;
+        UseSmallChunkMultipart = useSmallChunkMultipart;
         this.maxConcurrentMutations = maxConcurrentMutations;
         mutationSlots = new(maxConcurrentMutations, maxConcurrentMutations);
         chunkNameLocks = maxConcurrentMutations > 1 ? Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1)).ToArray() : [];
@@ -97,7 +134,7 @@ public sealed class GoogleDriveBackupStore : IBackupStore
             config.GoogleRootFolderId = folder;
             await saveConfiguration();
         }
-        return new(session, folder, optimizeChunkUploads: true, maxConcurrentMutations: 16);
+        return new(session, folder, optimizeChunkUploads: true, maxConcurrentMutations: 16, useSmallChunkMultipart: true);
     }
 
     public async Task<bool> ExistsAsync(string name, CancellationToken ct = default) => await FindAsync(name, ct) is not null;
@@ -121,7 +158,7 @@ public sealed class GoogleDriveBackupStore : IBackupStore
         string? temporary = null;
         try
         {
-            var existing = await FindAsync(name, ct, fresh: true);
+            var existing = await FindAsync(name, ct, fresh: true, allowEquivalentChunks: false);
             if (existing is not null && !overwrite) throw new IOException("มีวัตถุชื่อเดียวกันในคลังสำรองแล้ว");
             Stream upload = content;
             if (!content.CanSeek)
@@ -135,10 +172,7 @@ public sealed class GoogleDriveBackupStore : IBackupStore
             UploadReceipt receipt;
             try { receipt = await UploadAsync(name, existing, upload, ct); }
             finally { if (!ReferenceEquals(upload, content)) await upload.DisposeAsync(); }
-            // Drive permits duplicate names. Fail closed if another writer races this process.
-            var committed = await FindAsync(name, ct, fresh: true) ?? throw new IOException("Google Drive ยังไม่ยืนยันวัตถุที่อัปโหลด");
-            if (committed.Size != receipt.Length || committed.Properties.GetValueOrDefault("uploadId") != receipt.UploadId)
-                throw new IOException("Google Drive ไม่ได้ยืนยันวัตถุอัปโหลดเวอร์ชันที่ถูกต้อง");
+            await ConfirmUploadAsync(name, receipt, ct);
         }
         finally
         {
@@ -146,22 +180,137 @@ public sealed class GoogleDriveBackupStore : IBackupStore
         }
     }
 
-    private sealed record UploadReceipt(string UploadId, long Length);
+    private sealed record UploadReceipt(string UploadId, long Length, string FileId);
+
+    internal async Task<int?> TryCreateSmallChunkAsync(string name, Func<byte[]> encrypt, CancellationToken ct)
+    {
+        if (!IsChunkName(name)) throw new ArgumentException("Expected a canonical chunk name", nameof(name));
+        using var mutation = await AcquireMutationAsync(name, chunkPut: true, ct);
+        // Combine the existence check and create under the same lease. Existing chunks
+        // still go through the engine's normal authentication and repair path.
+        if (await FindAsync(name, ct, fresh: true) is not null) return null;
+
+        var encrypted = encrypt();
+        if (encrypted.Length is < 32 or > SmallChunkPlaintextLimit + 32)
+            throw new ArgumentException("Encrypted chunk exceeds the multipart size limit", nameof(encrypt));
+        var receipt = new UploadReceipt(Guid.NewGuid().ToString("N"), encrypted.Length, await ReserveIdAsync(ct));
+        var metadata = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            id = receipt.FileId,
+            name = EncodeName(name),
+            parents = new[] { folderId },
+            mimeType = "application/octet-stream",
+            appProperties = new Dictionary<string, string> { ["pcabRole"] = ObjectRole, ["uploadId"] = receipt.UploadId }
+        });
+        var boundary = "pcab-" + Guid.NewGuid().ToString("N");
+        using var response = await session.SendAsync(() =>
+        {
+            var body = new MultipartContent("related", boundary)
+            {
+                new ByteArrayContent(metadata) { Headers = { ContentType = new("application/json") { CharSet = "UTF-8" } } },
+                new ByteArrayContent(encrypted) { Headers = { ContentType = new("application/octet-stream") } }
+            };
+            return new HttpRequestMessage(HttpMethod.Post, "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id") { Content = body };
+        }, ct);
+        // A lost response can leave the reserved ID already created. Confirm the same
+        // ID and upload version after 409, with no new ID or name-based overwrite.
+        if (response.StatusCode != HttpStatusCode.Conflict)
+            await GoogleSession.EnsureSuccessAsync(response, ct);
+        await ConfirmUploadAsync(name, receipt, ct, verifyReceiptIdentity: true);
+        if (response.StatusCode == HttpStatusCode.Conflict)
+            GoogleDiagnostics.Write("upload-multipart", receipt.UploadId, 1, "confirmed-after-conflict", status: 409);
+        return encrypted.Length;
+    }
+
+    internal const int ConfirmationAttempts = 8;
+
+    private async Task ConfirmUploadAsync(string name, UploadReceipt receipt, CancellationToken ct, bool verifyReceiptIdentity = false)
+    {
+        bool delayed = false;
+        for (int attempt = 1; attempt <= ConfirmationAttempts; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            // Keep the name query: Drive allows duplicate names, even when one ID is valid.
+            var found = await FindAsync(name, ct, fresh: true, allowEquivalentChunks: false);
+            if (found is not null && found.Size == receipt.Length &&
+                found.Properties.GetValueOrDefault("uploadId") == receipt.UploadId)
+            {
+                if (verifyReceiptIdentity) RequireMatchingIdentity(CheckMetadata(found, name, receipt), receipt, attempt);
+                if (delayed || found.MimeType != "application/octet-stream") GoogleDiagnostics.Write("upload-confirm", receipt.UploadId, attempt,
+                    delayed ? "confirmed-after-delay" : "confirmed-binary-mime", metadataChecks: CheckMetadata(found, name, receipt));
+                return;
+            }
+            delayed = true;
+            string outcome = found is null ? "search-not-visible" : "search-version-pending";
+            // Inspect the same reserved/existing ID. Never create another object while confirming.
+            // This is diagnostic evidence, not permission to bypass the duplicate-name query.
+            try
+            {
+                var direct = await DriveApi.GetFileAsync(session, receipt.FileId, ct);
+                var checks = CheckMetadata(direct, name, receipt);
+                RequireMatchingIdentity(checks, receipt, attempt);
+                GoogleDiagnostics.Write("upload-confirm", receipt.UploadId, attempt, "metadata-observed", metadataChecks: checks);
+                if (direct.Size == receipt.Length && direct.Properties.GetValueOrDefault("uploadId") == receipt.UploadId)
+                    outcome += "-id-confirmed";
+            }
+            catch (HttpRequestException e) when (e.StatusCode == HttpStatusCode.NotFound) { outcome += "-id-not-visible"; }
+            if (attempt == ConfirmationAttempts)
+            {
+                GoogleDiagnostics.Write("upload-confirm", receipt.UploadId, attempt, "confirmation-exhausted-" + outcome);
+                throw new IOException("Google Drive ยังไม่ยืนยันวัตถุที่อัปโหลดหลังรอตรวจซ้ำครบจำนวนครั้งแล้ว");
+            }
+            var delay = TimeSpan.FromSeconds(Math.Min(30, Math.Pow(2, attempt - 1)) + Random.Shared.NextDouble());
+            GoogleDiagnostics.Write("upload-confirm", receipt.UploadId, attempt, outcome, delaySeconds: delay.TotalSeconds);
+            await session.DelayAsync(delay, ct);
+        }
+    }
+
+    private static void RequireMatchingIdentity(Dictionary<string, string> checks, UploadReceipt receipt, int attempt)
+    {
+        var conflicts = checks.Where(c => c.Value is "mismatch" or "unsupported").Select(c => c.Key).ToArray();
+        if (conflicts.Length == 0) return;
+        GoogleDiagnostics.Write("upload-confirm", receipt.UploadId, attempt, "identity-conflict", metadataChecks: checks);
+        throw new IOException("Google Drive คืนวัตถุยืนยันที่ไม่ตรงกับคลังสำรอง: " + string.Join(", ", conflicts));
+    }
+
+    private static bool IsBinaryMime(string mime) => !string.IsNullOrWhiteSpace(mime) &&
+        !mime.StartsWith("application/vnd.google-apps.", StringComparison.OrdinalIgnoreCase);
+
+    private Dictionary<string, string> CheckMetadata(DriveFile file, string name, UploadReceipt receipt) => new()
+    {
+        ["id"] = file.Id == receipt.FileId ? "match" : "mismatch",
+        ["name"] = file.Name == EncodeName(name) ? "match" : "mismatch",
+        ["parents"] = file.Parents.Contains(folderId) ? "match" : "mismatch",
+        ["pcabRole"] = file.Properties.GetValueOrDefault("pcabRole") == ObjectRole ? "match" : "mismatch",
+        ["mimeType"] = IsBinaryMime(file.MimeType) ? file.MimeType == "application/octet-stream" ? "match" : "accepted-binary" : "unsupported",
+        ["mimeTypeClass"] = file.MimeType switch { "image/jp2" => "image/jp2", "application/octet-stream" => "application/octet-stream", "" => "missing", _ => IsBinaryMime(file.MimeType) ? "other-binary" : "google-workspace-or-missing" },
+        ["size"] = file.Size == receipt.Length ? "match" : "version-pending",
+        ["uploadId"] = file.Properties.GetValueOrDefault("uploadId") == receipt.UploadId ? "match" : "version-pending"
+    };
+
+    private static void RequireBinaryObject(DriveFile file)
+    {
+        if (!IsBinaryMime(file.MimeType)) throw new IOException("วัตถุสำรองมี mimeType ที่ไม่รองรับ");
+    }
 
     private async Task<UploadReceipt> UploadAsync(string name, DriveFile? existing, Stream content, CancellationToken ct)
     {
         var start = content.Position;
         var length = content.Length - start;
-        var receipt = new UploadReceipt(Guid.NewGuid().ToString("N"), length);
+
+        // A stable pre-generated ID makes an uncertain create retry idempotent on Drive.
+        // Keep it for every restarted session of this object; never allocate on retry.
+        var reservedId = existing is null ? await ReserveIdAsync(ct) : null;
+        var receipt = new UploadReceipt(Guid.NewGuid().ToString("N"), length, existing?.Id ?? reservedId!);
         for (var restart = 0; ; restart++)
         {
             content.Position = start;
-            try { return await UploadSessionAsync(name, existing, content, receipt, ct); }
+            try { return await UploadSessionAsync(name, existing, content, receipt, reservedId, ct); }
             catch (UploadSessionExpiredException)
             {
                 // A lost final acknowledgement can leave a completed object. Reconcile before
                 // creating another session, and never overwrite a different writer's object.
-                var found = await FindAsync(name, ct, fresh: true);
+                var found = await FindAsync(name, ct, fresh: true, allowEquivalentChunks: false);
                 if (found is not null)
                 {
                     var ours = found.Properties.GetValueOrDefault("uploadId") == receipt.UploadId;
@@ -189,12 +338,12 @@ public sealed class GoogleDriveBackupStore : IBackupStore
 
     private sealed class UploadSessionExpiredException : IOException { }
 
-    private async Task<UploadReceipt> UploadSessionAsync(string name, DriveFile? existing, Stream content, UploadReceipt receipt, CancellationToken ct)
+    private async Task<UploadReceipt> UploadSessionAsync(string name, DriveFile? existing, Stream content, UploadReceipt receipt, string? reservedId, CancellationToken ct)
     {
         var start = content.Position;
         var length = receipt.Length;
         var metadata = new Dictionary<string, object> { ["name"] = EncodeName(name), ["mimeType"] = "application/octet-stream", ["appProperties"] = new Dictionary<string, string> { ["pcabRole"] = ObjectRole, ["uploadId"] = receipt.UploadId } };
-        if (existing is null) metadata["parents"] = new[] { folderId };
+        if (existing is null) { metadata["parents"] = new[] { folderId }; metadata["id"] = reservedId!; }
         var bytes = JsonSerializer.SerializeToUtf8Bytes(metadata);
         var endpoint = "https://www.googleapis.com/upload/drive/v3/files" + (existing is null ? "" : "/" + Uri.EscapeDataString(existing.Id)) + "?uploadType=resumable&fields=id";
         using var initial = await session.SendAsync(() =>
@@ -204,7 +353,9 @@ public sealed class GoogleDriveBackupStore : IBackupStore
             request.Headers.TryAddWithoutValidation("X-Upload-Content-Type", "application/octet-stream");
             request.Headers.TryAddWithoutValidation("X-Upload-Content-Length", length.ToString(System.Globalization.CultureInfo.InvariantCulture));
             return request;
-        }, ct, retrySafe: false);
+        }, ct, retrySafe: true);
+        // A retry can observe an already committed ID after its final acknowledgement was lost.
+        if (initial.StatusCode == HttpStatusCode.Conflict) throw new UploadSessionExpiredException();
         await GoogleSession.EnsureSuccessAsync(initial, ct);
         var location = initial.Headers.Location ?? throw new IOException("Google ไม่ได้คืน upload session");
         if (!location.IsAbsoluteUri || location.Scheme != "https" || !location.Host.Equals("www.googleapis.com", StringComparison.OrdinalIgnoreCase) ||
@@ -218,6 +369,7 @@ public sealed class GoogleDriveBackupStore : IBackupStore
         var buffer = direct ? source.Array! : new byte[singleRequest ? Math.Max(1, (int)length) : 1024 * 1024]; // Streaming blocks remain multiples of 256 KiB, bounded independently of file size.
         long offset = 0;
         var stalled = 0;
+        var recoveredRequest = false;
         do
         {
             ct.ThrowIfCancellationRequested();
@@ -245,13 +397,14 @@ public sealed class GoogleDriveBackupStore : IBackupStore
             }
             catch (HttpRequestException) { /* Resolve ambiguous acknowledgement through the existing session. */ }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested) { /* HTTP timeout; probe before retrying data. */ }
-            if (response is null || (int)response.StatusCode == 429 || (int)response.StatusCode >= 500)
+            if (response is null || (int)response.StatusCode is 408 or 429 || (int)response.StatusCode >= 500 ||
+                response.StatusCode == HttpStatusCode.Forbidden && await GoogleSession.ReadReasonAsync(response, ct) is "rateLimitExceeded" or "userRateLimitExceeded")
             {
+                recoveredRequest = true;
                 var delay = response?.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(Math.Pow(2, stalled));
-                var throttled = response is not null;
                 response?.Dispose();
                 if (++stalled > 4) throw new IOException("Google Drive ไม่ยืนยันสถานะอัปโหลดหลังลองซ้ำแล้ว");
-                if (throttled) await Task.Delay(delay > TimeSpan.FromSeconds(30) ? TimeSpan.FromSeconds(30) : delay < TimeSpan.Zero ? TimeSpan.Zero : delay, ct);
+                await Task.Delay(delay > TimeSpan.FromSeconds(30) ? TimeSpan.FromSeconds(30) : delay < TimeSpan.Zero ? TimeSpan.Zero : delay, ct);
                 response = await ProbeUploadAsync(location, length, ct);
             }
             using (response)
@@ -270,6 +423,7 @@ public sealed class GoogleDriveBackupStore : IBackupStore
                 {
                     await GoogleSession.EnsureSuccessAsync(response, ct);
                     if (offset + needed != length) throw new IOException("Google ยืนยันอัปโหลดก่อนข้อมูลครบ");
+                    if (recoveredRequest) GoogleDiagnostics.Write("upload-session", receipt.UploadId, 1, "recovered-after-probe", status: (int)response.StatusCode);
                     return receipt;
                 }
             }
@@ -297,7 +451,7 @@ public sealed class GoogleDriveBackupStore : IBackupStore
     {
         ValidateName(name);
         using var mutation = await AcquireMutationAsync(name, false, ct);
-        var file = await FindAsync(name, ct, fresh: true);
+        var file = await FindAsync(name, ct, fresh: true, allowEquivalentChunks: false);
         if (file is null) return;
         // FindAsync restricts both direct parent and app marker; arbitrary destination files are never touched.
         using var response = await session.SendAsync(() => new HttpRequestMessage(HttpMethod.Delete, "https://www.googleapis.com/drive/v3/files/" + Uri.EscapeDataString(file.Id)), ct);
@@ -308,16 +462,62 @@ public sealed class GoogleDriveBackupStore : IBackupStore
     public async IAsyncEnumerable<StoredObject> ListAsync(string prefix, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
         if (prefix.Contains('\\') || prefix.Contains('\0')) throw new ArgumentException("Invalid repository prefix", nameof(prefix));
+        var objects = new Dictionary<string, StoredObject>(StringComparer.Ordinal);
         await foreach (var file in DriveApi.EnumerateFilesAsync(session, BaseQuery, ct))
         {
             var name = DecodeName(file.Name);
-            if (name is not null && name.StartsWith(prefix, StringComparison.Ordinal)) yield return new(name, file.Size, file.ModifiedUtc);
+            if (name is null || !name.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            RequireBinaryObject(file);
+            if (objects.TryGetValue(name, out var previous))
+            {
+                if (!IsChunkName(name)) throw DuplicateConflict("non-chunk", 2);
+                // One logical item, all physical bytes count against quota. Reads authenticate
+                // every copy. Deletion of duplicates is deliberately refused, even during prune.
+                objects[name] = previous with { Size = checked(previous.Size + file.Size),
+                    ModifiedUtc = previous.ModifiedUtc > file.ModifiedUtc ? previous.ModifiedUtc : file.ModifiedUtc };
+            }
+            else objects.Add(name, new(name, file.Size, file.ModifiedUtc));
+        }
+        foreach (var item in objects.Values) { ct.ThrowIfCancellationRequested(); yield return item; }
+    }
+
+    private string BaseQuery => $"'{DriveApi.Escape(folderId)}' in parents and trashed=false and appProperties has {{ key='pcabRole' and value='{ObjectRole}' }}";
+
+    internal async Task<Dictionary<string, long>> ReadTrustedChunkSizesAsync(IReadOnlySet<string> ids, CancellationToken ct)
+    {
+        var sizes = new Dictionary<string, long>(StringComparer.Ordinal);
+        // Six UTF-8 bytes align with base64 groups, so this prefix covers every
+        // encoded chunk name. Validate the exact decoded name as well.
+        var query = BaseQuery + $" and name contains '{EncodeName("chunks")}'";
+        await foreach (var file in DriveApi.EnumerateFilesAsync(session, query, ct))
+        {
+            var name = DecodeName(file.Name);
+            if (name is null || !IsChunkName(name)) continue;
+            var id = name[7..^6];
+            if (!ids.Contains(id)) continue;
+            // Zero means ambiguous or invalid. A subsequent record cannot restore trust.
+            var eligible = IsBinaryMime(file.MimeType) && file.Parents.Contains(folderId) &&
+                file.Properties.GetValueOrDefault("pcabRole") == ObjectRole && file.Size is >= 32 and <= OptimizedChunkLimit;
+            if (!sizes.TryAdd(id, eligible ? file.Size : 0)) sizes[id] = 0;
+        }
+        return sizes;
+    }
+
+    internal async Task RecheckTrustedChunksAsync(IReadOnlyDictionary<string, long> reused, CancellationToken ct)
+    {
+        var current = await ReadTrustedChunkSizesAsync(reused.Keys.ToHashSet(StringComparer.Ordinal), ct);
+        foreach (var (id, size) in reused)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (current.TryGetValue(id, out var observed) && observed == size) continue;
+            // A stale page or a duplicate must go through the same exact-name lookup
+            // and authentication as any other existing chunk.
+            var file = await FindAsync("chunks/" + id + ".chunk", ct, fresh: true);
+            if (file?.Size != size) throw new IOException("ข้อมูลสำรองเดิมหายไปหรือขนาดเปลี่ยนก่อนบันทึกชุดสำรองใหม่");
         }
     }
 
-    private string BaseQuery => $"'{DriveApi.Escape(folderId)}' in parents and trashed=false and mimeType='application/octet-stream' and appProperties has {{ key='pcabRole' and value='{ObjectRole}' }}";
-
-    private async Task<DriveFile?> FindAsync(string name, CancellationToken ct, bool fresh = false)
+    private async Task<DriveFile?> FindAsync(string name, CancellationToken ct, bool fresh = false, bool allowEquivalentChunks = true)
     {
         ValidateName(name);
         ct.ThrowIfCancellationRequested();
@@ -327,10 +527,12 @@ public sealed class GoogleDriveBackupStore : IBackupStore
             if (fresh) lookupCache.Remove(name);
         }
         var files = await DriveApi.ListFilesAsync(session, BaseQuery + $" and name='{DriveApi.Escape(EncodeName(name))}'", ct);
-        if (files.Count > 1) throw new IOException("พบชื่อวัตถุซ้ำใน Google Drive หยุดเพื่อป้องกันข้อมูลสำรองเสียหาย");
-        var file = files.SingleOrDefault();
+        var file = files.Count > 1
+            ? allowEquivalentChunks ? await ResolveDuplicateChunkAsync(name, files, ct) : throw DuplicateConflict("mutation-refused", files.Count)
+            : files.SingleOrDefault();
         if (file is not null)
         {
+            RequireBinaryObject(file);
             lock (lookupCache)
             {
                 if (!lookupCache.ContainsKey(name)) cacheOrder.Enqueue(name);
@@ -339,6 +541,54 @@ public sealed class GoogleDriveBackupStore : IBackupStore
             }
         }
         return file;
+    }
+
+    private static bool IsChunkName(string name) => name.Length == 77 && name.StartsWith("chunks/", StringComparison.Ordinal) &&
+        name.EndsWith(".chunk", StringComparison.Ordinal) && name.AsSpan(7, 64).IndexOfAnyExcept("0123456789abcdef") < 0;
+
+    private static IOException DuplicateConflict(string reason, int count, Exception? inner = null)
+    {
+        GoogleDiagnostics.Write("duplicate-object", Guid.NewGuid().ToString("N"), 1, reason, inner,
+            metadataChecks: new Dictionary<string, string> { ["copies"] = count.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+        return new IOException("พบชื่อวัตถุซ้ำใน Google Drive ที่ยังใช้ต่อไม่ได้: " + reason + " (" + count + " สำเนา) เก็บทุกสำเนาไว้เพื่อป้องกันข้อมูลสูญหาย", inner);
+    }
+
+    private async Task<DriveFile> ResolveDuplicateChunkAsync(string name, List<DriveFile> files, CancellationToken ct)
+    {
+        var verify = chunkVerifier;
+        if (!IsChunkName(name) || verify is null) throw DuplicateConflict("authentication-required", files.Count);
+        foreach (var file in files.OrderBy(f => f.Id, StringComparer.Ordinal))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (file.Name != EncodeName(name) || !file.Parents.Contains(folderId) || file.Properties.GetValueOrDefault("pcabRole") != ObjectRole)
+                throw DuplicateConflict("identity-conflict", files.Count);
+            if (!IsBinaryMime(file.MimeType) || file.Size is < 32 or > OptimizedChunkLimit)
+                throw DuplicateConflict("unsupported-metadata", files.Count);
+            using var response = await session.SendAsync(() => new HttpRequestMessage(HttpMethod.Get,
+                "https://www.googleapis.com/drive/v3/files/" + Uri.EscapeDataString(file.Id) + "?alt=media"), ct);
+            await GoogleSession.EnsureSuccessAsync(response, ct);
+            await using var input = await response.Content.ReadAsStreamAsync(ct);
+            using var memory = new MemoryStream();
+            var buffer = new byte[65536];
+            int read;
+            while ((read = await input.ReadAsync(buffer, ct)) != 0)
+            {
+                if (memory.Length + read > OptimizedChunkLimit) throw DuplicateConflict("size-limit", files.Count);
+                memory.Write(buffer, 0, read);
+            }
+            try
+            {
+                if (memory.Length != file.Size || !verify(name[7..^6], memory.ToArray()))
+                    throw DuplicateConflict("chunk-identity-mismatch", files.Count);
+            }
+            catch (Exception e) when (e is CryptographicException or InvalidDataException)
+            { throw DuplicateConflict("chunk-authentication-failed", files.Count, e); }
+        }
+        // Each payload authenticates to the same keyed content address. Random encryption
+        // nonces may differ. Select deterministically; retain every physical copy unchanged.
+        GoogleDiagnostics.Write("duplicate-object", Guid.NewGuid().ToString("N"), 1, "authenticated-equivalent-chunks",
+            metadataChecks: new Dictionary<string, string> { ["copies"] = files.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+        return files.MinBy(f => f.Id, StringComparer.Ordinal)!;
     }
 
     public static string EncodeName(string name)
@@ -369,6 +619,7 @@ public sealed class GoogleDriveBackupStore : IBackupStore
 
     public ValueTask DisposeAsync()
     {
+        idLock.Dispose();
         mutationLock.Dispose();
         mutationSlots.Dispose();
         foreach (var nameLock in chunkNameLocks) nameLock.Dispose();

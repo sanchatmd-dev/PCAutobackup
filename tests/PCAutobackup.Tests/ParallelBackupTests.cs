@@ -57,6 +57,57 @@ public sealed class ParallelBackupTests : IDisposable
         }
     }
     [Fact]
+    public async Task SixteenSmallFilesStayConcurrentAndRestore()
+    {
+        for (int i = 0; i < 48; i++)
+            await File.WriteAllBytesAsync(Path.Combine(Source, i + ".bin"), RandomNumberGenerator.GetBytes(512));
+        var store = new FourSlotStore(new LocalBackupStore(Repo), "success", 16);
+        var engine = new BackupEngine(store, key, maxConcurrentChunks: 16);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var result = await engine.BackupAsync(Config(), ct: cancellation.Token);
+        Assert.Equal(16, store.Maximum); Assert.Equal(48, store.Puts); Assert.Equal(0, store.Active);
+        string destination = Path.Combine(root, "restore-many-small");
+        await engine.RestoreAsync(result.SnapshotId, destination);
+        string restored = Assert.Single(Directory.GetDirectories(destination));
+        foreach (string file in Directory.GetFiles(Source))
+            Assert.Equal(await File.ReadAllBytesAsync(file), await File.ReadAllBytesAsync(Path.Combine(restored, Path.GetFileName(file))));
+    }
+
+    [Fact]
+    public async Task SmallFilesOverlapAcrossBoundariesAndRestoreWithoutDuplicates()
+    {
+        byte[] a = RandomNumberGenerator.GetBytes(113), b = RandomNumberGenerator.GetBytes(227);
+        await File.WriteAllBytesAsync(Path.Combine(Source, "a"), a);
+        await File.WriteAllBytesAsync(Path.Combine(Source, "b"), b);
+        await File.WriteAllBytesAsync(Path.Combine(Source, "copy"), a);
+        var store = new GatedStore(new LocalBackupStore(Repo));
+        var engine = new BackupEngine(store, key, maxConcurrentChunks: 2);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var result = await engine.BackupAsync(Config(), ct: cancellation.Token);
+        Assert.Equal(2, store.Maximum); Assert.Equal(2, store.Puts); Assert.Equal(0, store.Active);
+        Assert.Equal(3, result.FileCount);
+        string destination = Path.Combine(root, "restore-small");
+        await engine.RestoreAsync(result.SnapshotId, destination);
+        string restored = Assert.Single(Directory.GetDirectories(destination));
+        Assert.Equal(a, await File.ReadAllBytesAsync(Path.Combine(restored, "a")));
+        Assert.Equal(b, await File.ReadAllBytesAsync(Path.Combine(restored, "b")));
+        Assert.Equal(a, await File.ReadAllBytesAsync(Path.Combine(restored, "copy")));
+    }
+
+    [Fact]
+    public async Task SmallFileUploadFailureDoesNotCommitSnapshot()
+    {
+        await File.WriteAllBytesAsync(Path.Combine(Source, "a"), RandomNumberGenerator.GetBytes(113));
+        await File.WriteAllBytesAsync(Path.Combine(Source, "b"), RandomNumberGenerator.GetBytes(227));
+        var store = new GatedStore(new LocalBackupStore(Repo), fail: true);
+        var engine = new BackupEngine(store, key, maxConcurrentChunks: 2);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await Assert.ThrowsAsync<IOException>(() => engine.BackupAsync(Config(), ct: cancellation.Token));
+        Assert.Equal(0, store.Active);
+        Assert.Empty(await engine.ListSnapshotsAsync());
+    }
+
+    [Fact]
     public async Task TwoChunksRunConcurrentlyDeduplicateAndRestore()
     {
         byte[] a = RandomNumberGenerator.GetBytes(ChunkSize), b = RandomNumberGenerator.GetBytes(ChunkSize);

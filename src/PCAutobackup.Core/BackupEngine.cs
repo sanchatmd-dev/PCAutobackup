@@ -3,6 +3,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Collections.Concurrent;
+using PCAutobackup.Core.Google;
 
 namespace PCAutobackup.Core;
 
@@ -29,6 +31,15 @@ public sealed class BackupEngine
         if (recoveryKey is null || recoveryKey.Length != 32) throw new ArgumentException("Recovery key must be 32 bytes.", nameof(recoveryKey));
         encryptionKey = HMACSHA256.HashData(recoveryKey, Encoding.UTF8.GetBytes("PCAutobackup encryption v1"));
         namingKey = HMACSHA256.HashData(recoveryKey, Encoding.UTF8.GetBytes("PCAutobackup chunk names v1"));
+        if (store is IAuthenticatedChunkStore authenticated) authenticated.SetChunkVerifier(VerifyDuplicateChunk);
+    }
+
+    private bool VerifyDuplicateChunk(string id, byte[] encrypted)
+    {
+        if (!ChunkId.IsMatch(id) || encrypted.Length > ChunkSize + 32) return false;
+        byte[] plain = Decrypt(encrypted, "chunk:" + id);
+        try { return Hash(plain) == id; }
+        finally { CryptographicOperations.ZeroMemory(plain); }
     }
     private sealed class Manifest
     {
@@ -171,6 +182,19 @@ public sealed class BackupEngine
         if (config.RetentionDays < 0 || config.QuotaBytes < 0) throw new ArgumentOutOfRangeException(nameof(config));
         if (config.Sources.Count == 0) throw new InvalidOperationException("At least one source is required.");
         ct.ThrowIfCancellationRequested();
+        var skippedLinks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        bool SkipSourceLink(string path)
+        {
+            var attributes = File.GetAttributes(path);
+            if ((attributes & FileAttributes.ReparsePoint) == 0) return false;
+            FileSystemInfo info = (attributes & FileAttributes.Directory) != 0 ? new DirectoryInfo(path) : new FileInfo(path);
+            // Only named links are excluded. Cloud placeholders and unknown reparse tags
+            // must still fail rather than silently excluding unreadable source data.
+            string? target = info.LinkTarget;
+            if (target is null) { CheckReparse(path); return false; }
+            skippedLinks[path] = Path.GetFullPath(target, Path.GetDirectoryName(path)!);
+            return true;
+        }
         // Fail before creating ownership metadata if any selected source is unavailable.
         var preflightIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in config.Sources)
@@ -200,7 +224,9 @@ public sealed class BackupEngine
                     foreach (string path in Directory.EnumerateFileSystemEntries(directory))
                     {
                         ct.ThrowIfCancellationRequested();
-                        CheckReparse(path);
+                        if (SkipSourceLink(path)) continue;
+                        // The estimate only reads metadata. The directory's ancestor chain
+                        // was checked above; the actual read pass still validates each path.
                         if (Directory.Exists(path)) directories.Push(path);
                         else total = checked(total + new FileInfo(path).Length);
                     }
@@ -213,6 +239,10 @@ public sealed class BackupEngine
         var previous = await ReadAllManifests(ct);
         await EnsureOwner(config.DeviceId, previous.Count != 0, ct);
         var trustedChunks = previous.SelectMany(m => m.Chunks).ToHashSet(StringComparer.Ordinal);
+        var drive = store is GoogleDriveBackupStore { UseSmallChunkMultipart: true } fastDrive ? fastDrive : null;
+        var trustedSizes = drive is not null && trustedChunks.Count >= GoogleDriveBackupStore.TrustedInventoryThreshold
+            ? await drive.ReadTrustedChunkSizesAsync(trustedChunks, ct) : null;
+        var reusedTrusted = new ConcurrentDictionary<string, long>(StringComparer.Ordinal);
         var sourceIds = new HashSet<string>(StringComparer.Ordinal);
         // Durable content-addressed chunks are the resume checkpoint. Re-read source bytes
         // on every attempt, and authenticate any chunk not referenced by a prior snapshot.
@@ -232,29 +262,42 @@ public sealed class BackupEngine
             try
             {
                 string name = ChunkName(id);
-                if (await store.ExistsAsync(name, token))
+                if (trustedSizes is not null && trustedSizes.TryGetValue(id, out var size) && size == filled + 32)
                 {
-                    if (!trustedChunks.Contains(id))
+                    reusedTrusted.TryAdd(id, size);
+                    return;
+                }
+                if (drive is not null && filled <= GoogleDriveBackupStore.SmallChunkPlaintextLimit)
+                {
+                    var uploadedSize = await drive.TryCreateSmallChunkAsync(name,
+                        () => Encrypt(buffer.AsSpan(0, filled), "chunk:" + id), token);
+                    if (uploadedSize is int created)
                     {
-                        try
-                        {
-                            byte[] existing = await ReadChunk(id, token);
-                            if (!existing.AsSpan().SequenceEqual(buffer.AsSpan(0, filled))) throw new InvalidDataException("Existing chunk does not match its name.");
-                        }
-                        catch (Exception ex) when (ex is CryptographicException or InvalidDataException)
-                        {
-                            // This orphan is not referenced by a committed snapshot. Replace a
-                            // corrupted interrupted upload, preserving all committed chunks.
-                            await store.DeleteAsync(name, token);
-                            byte[] encrypted = Encrypt(buffer.AsSpan(0, filled), "chunk:" + id);
-                            await Put(name, encrypted, token); Interlocked.Add(ref uploaded, encrypted.Length);
-                        }
+                        Interlocked.Add(ref uploaded, created);
+                        return;
                     }
                 }
-                else
+                else if (!await store.ExistsAsync(name, token))
                 {
                     byte[] encrypted = Encrypt(buffer.AsSpan(0, filled), "chunk:" + id);
                     await Put(name, encrypted, token); Interlocked.Add(ref uploaded, encrypted.Length);
+                    return;
+                }
+                if (!trustedChunks.Contains(id))
+                {
+                    try
+                    {
+                        byte[] existing = await ReadChunk(id, token);
+                        if (!existing.AsSpan().SequenceEqual(buffer.AsSpan(0, filled))) throw new InvalidDataException("Existing chunk does not match its name.");
+                    }
+                    catch (Exception ex) when (ex is CryptographicException or InvalidDataException)
+                    {
+                        // This orphan is not referenced by a committed snapshot. Replace a
+                        // corrupted interrupted upload, preserving all committed chunks.
+                        await store.DeleteAsync(name, token);
+                        byte[] encrypted = Encrypt(buffer.AsSpan(0, filled), "chunk:" + id);
+                        await Put(name, encrypted, token); Interlocked.Add(ref uploaded, encrypted.Length);
+                    }
                 }
             }
             catch (Exception ex)
@@ -294,7 +337,9 @@ public sealed class BackupEngine
                     manifest.Entries.Add(new Entry { Path = current.Relative, Directory = true });
                     foreach (string path in Directory.EnumerateFileSystemEntries(current.Directory))
                     {
-                        ct.ThrowIfCancellationRequested(); CheckReparse(path);
+                        ct.ThrowIfCancellationRequested();
+                        if (SkipSourceLink(path)) continue;
+                        CheckReparse(path);
                         string relative = current.Relative + "/" + Path.GetFileName(path); ValidateRelativePath(relative);
                         if (Directory.Exists(path)) { pending.Push((path, relative)); continue; }
                         progressPath = path;
@@ -332,7 +377,6 @@ public sealed class BackupEngine
                                 finally { buffer = null!; }
                             }
                         }
-                        while (pendingChunks.Count > 0) await DrainOne();
                         info.Refresh();
                         if (!info.Exists || fileBytes != initialLength || info.Length != initialLength || info.LastWriteTimeUtc != modified) throw new IOException("Source file changed during backup: " + path);
                         manifest.Entries.Add(entry); count++; bytes += fileBytes;
@@ -340,6 +384,8 @@ public sealed class BackupEngine
                     }
                 }
             }
+            // Uploads span file boundaries, but every object must be durable before commit.
+            while (pendingChunks.Count > 0) await DrainOne();
         }
         catch
         {
@@ -356,6 +402,8 @@ public sealed class BackupEngine
         }
         ct.ThrowIfCancellationRequested();
         progress?.Report(new BackupProgress("finalizing", null, count, progressBytes, estimatedTotal));
+        if (drive is not null && !reusedTrusted.IsEmpty)
+            await drive.RecheckTrustedChunksAsync(reusedTrusted, ct);
         byte[] manifestPlain = JsonSerializer.SerializeToUtf8Bytes(manifest, JsonOptions);
         if (manifestPlain.Length > 256 * 1024 * 1024 - 32) throw new InvalidOperationException("Snapshot manifest exceeds the supported size.");
         byte[] manifestBytes = Encrypt(manifestPlain, "manifest:" + manifest.Id);
@@ -363,7 +411,33 @@ public sealed class BackupEngine
         ct.ThrowIfCancellationRequested();
         await Put(ManifestName(manifest.Id), manifestBytes, ct); uploaded += manifestBytes.Length;
         var warnings = new List<string>();
-        try { previous.Add(Summarize(manifest)); await Prune(previous, manifest.Id, config.RetentionDays, config.QuotaBytes, warnings, ct); }
+        bool uncoveredLinks = false;
+        foreach (var link in skippedLinks)
+        {
+            bool covered = false;
+            try
+            {
+                CheckReparse(link.Value);
+                covered = (File.Exists(link.Value) || Directory.Exists(link.Value)) && config.Sources.Any(source =>
+                {
+                    string root = Path.GetFullPath(source.Path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    if (!string.Equals(link.Value.TrimEnd(Path.DirectorySeparatorChar), root, StringComparison.OrdinalIgnoreCase) &&
+                        !link.Value.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return false;
+                    string relative = Path.GetRelativePath(source.Path, link.Value).Replace('\\', '/');
+                    string manifestPath = SourceFolderName(source, Path.GetFullPath(source.Path)) + (relative == "." ? "" : "/" + relative);
+                    return manifest.Entries.Any(entry => string.Equals(entry.Path, manifestPath, StringComparison.OrdinalIgnoreCase));
+                });
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            uncoveredLinks |= !covered;
+            warnings.Add((covered ? "Skipped link; target backed up through its original path: " : "Skipped link; target is not included in this snapshot: ") + link.Key);
+        }
+        try
+        {
+            if (uncoveredLinks) warnings.Add("Previous snapshots retained because some link targets were not included; retention and quota cleanup were skipped.");
+            else { previous.Add(Summarize(manifest)); await Prune(previous, manifest.Id, config.RetentionDays, config.QuotaBytes, warnings, ct); }
+        }
         catch (OperationCanceledException) { warnings.Add("Snapshot committed; cleanup was cancelled."); }
         catch (Exception ex) { warnings.Add("Snapshot committed; cleanup failed: " + ex.Message); }
         return new BackupResult(manifest.Id, count, bytes, uploaded, warnings);

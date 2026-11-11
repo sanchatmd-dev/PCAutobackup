@@ -1,4 +1,74 @@
+## แก้ MIME identity-conflict (2026-11-10)
+
+- ตรวจ metadata แบบอ่านอย่างเดียวโดย uploadId จาก log รอบ 02:19 ที่ล้มเหลว พบ 1 วัตถุในคลังจริง: `mimeType=image/jp2`, parent/pcabRole/uploadId/name canonical ตรง และ AES-GCM decrypt + HMAC chunk-name ผ่าน ไม่ได้เขียนหรือกู้คืนไฟล์จริงลงดิสก์
+- สาเหตุที่ยืนยัน: query จำกัด MIME เป็น application/octet-stream จึงซ่อนวัตถุนี้ แล้ว direct-ID check ปฏิเสธ MIME image/jp2; เป็นเงื่อนไขของแอปที่แคบเกินไป ไม่ใช่หลักฐานว่าข้อมูลเสีย เหตุที่ Drive จัด MIME เป็น image/jp2 ยังไม่สรุปกลไกภายใน Google
+- เอา MIME filter ออกจาก query; ทุก read/list/mutation ยังคง scope parent + app marker + canonical name; ปฏิเสธ Google Workspace/folder/shortcut ที่ติด object marker ส่วน MIME ไบนารีอื่นรับได้ การอ่าน encrypted payload ยังตรวจ AEAD/HMAC ตามเดิม
+- เพิ่ม MetadataChecks ของ id/name/parents/pcabRole/mimeType/size/uploadId ไม่มี raw names/IDs/token; identity error แสดงชื่อช่องที่ไม่ตรง; คง bounded confirmation และไม่อัปโหลดซ้ำระหว่างรอ
+- เพิ่ม regression tests แยกช่องผิด, accepted image/jp2, duplicate/foreign/native restrictions และการมองเห็น binary MIME ผ่าน Exists/List/Delete
+- Release build ผ่าน; tests 238/238 ผ่าน; live Drive fixture แยกจาก production ผ่านด้วย binary MIME จริง image/jp2 และ application/pdf จำนวน 2 objects
+- Final live test กำหนด metadata และ media Content-Type ของ fixture ระหว่าง upload; ทดลอง metadata-only PATCH ครั้งแรกแล้ว Drive ไม่เก็บ MIME เปลี่ยนไว้ จึงไม่นับชุดนั้นเป็นผลยืนยัน MIME
+- Restore 36/36 files / 65,591 logical bytes ตรงทุก byte/SHA256; 34 chunks, 2 snapshots, duplicate object names 0, Junction alias entries 0; หลังจำลอง outage ชุดก่อนหน้ายังอยู่; configuration จริง hash ไม่เปลี่ยน
+- Evidence แบบ read-only ของวัตถุจริง `%TEMP%\PCAutobackup-identity-diagnostic-20261110\evidence.json`; final synthetic report `%TEMP%\PCAutobackup-tests\drive-metadata-3151727f297442aeb6a3adf968c3d590\drive-test-result.json`; log `%LOCALAPPDATA%\PCAutobackup\logs\google-27732.jsonl` แสดง accepted-binary และผลรายช่อง
+- ติดตั้งสำเร็จ 2026-11-10 10:06:57 +07:00; Core SHA256 A61BC37DA40C05A616EAA4FA6F56756245CBC89C6BAB63711D226F2278276776; hashes ตรง 817/817; configuration, startup, task XML 21:00 และ last-success marker ไม่เปลี่ยน
+- Verification `%TEMP%\PCAutobackup-install-metadata-ef27a6fc9ab14969accde51fb0d43ac3\verification.json`
+- Live synthetic harness peak working set 145,670,144 bytes (ประมาณ 139 MiB); ไม่ใช่การรับประกัน RAM ของงานจริง
+
+## รอการยืนยันวัตถุหลังอัปโหลด (2026-11-10)
+
+- รอบจริง 23:35:06 วันที่ 9 พ.ย. จบ Failed 02:09:35 วันที่ 10 พ.ย. ด้วย `Google Drive ยังไม่ยืนยันวัตถุที่อัปโหลด`; ไม่มี HTTP retry/error ใน log; ไม่มี snapshot ใหม่ สถานะ last-success เดิมไม่เปลี่ยน
+- จุดล้มเหลวที่ยืนยันได้: PutAsync อาศัย name search เพียงครั้งเดียวหลังอัปโหลดและ throw หากผลว่าง โดยไม่ได้ตรวจ ID หรือรอ visibility สาเหตุว่าทำไม Google คืนผลว่างย้อนหลังยังพิสูจน์ไม่ได้
+- เปลี่ยนเป็น bounded confirmation 8 attempts: metadata GET ด้วย reserved/existing file ID เมื่อ name search หาย/เก่า; ตรวจ parent/marker/name/MIME ก่อนรอ; ต้อง name search เหลือหนึ่งวัตถุและตรงขนาด/uploadId จึงยืนยัน ไม่มี POST/PATCH/data PUT เพิ่มในขั้นตอนนี้
+- Log `upload-confirm` ระบุ missing/stale search, direct-ID visibility, identity conflict, recovered และ exhaustion ด้วย upload correlation ID ที่ไม่มีข้อมูลลับ
+- เพิ่ม tests delay search สำหรับ create/overwrite, stale metadata, permanent missing, foreign object, duplicate writer และ cancellation พร้อมยืนยัน payload ส่งเพียงครั้งเดียว
+- Release build และ tests 227/227 ผ่าน; live Drive fixture แยก repository จาก production ผ่าน: จำลอง search ไม่พบ 3 ครั้ง / direct GET 404 หนึ่งครั้ง แล้ว confirm ครั้งที่ 4 โดยไม่สร้างข้อมูลซ้ำ
+- Restore ข้อมูลจำลอง 36/36 files / 65,591 logical bytes ตรงทุก byte/SHA256; 34 chunks, 2 snapshots, duplicate object names 0, Junction alias entries 0; persistent transport outage ยังคง snapshot ก่อนหน้าได้; hash configuration จริงไม่เปลี่ยน
+- Report `%TEMP%\PCAutobackup-tests\drive-confirm-23265130ce444a6e9b8c977b67398896\drive-test-result.json`; log `%LOCALAPPDATA%\PCAutobackup\logs\google-27148.jsonl`
+- การทดสอบใช้ fault injection กับผลตอบกลับของ Google Drive จริงเพื่อจำลอง visibility delay ไม่ได้อ้างว่า Google เกิด delay เองระหว่างทดสอบ; ไม่ใช้ไฟล์จริงหรือเปลี่ยน repository จริง
+- เพิ่ม English translations ของ diagnostics หลัง live test และยืนยันด้วย release build/tests 227/227 อีกครั้ง โดยโค้ดอัปโหลดยังคงเดิม
+- ติดตั้งสำเร็จ 2026-11-10 02:19:49 +07:00; Core SHA256 `718331D02F715EC8291524154317FF0FD07398D7B3FA3BB629FBCFE922AA0D97`; hashes ตรง 817/817; configuration, startup, task XML 21:00 และ last-success marker เดิมไม่เปลี่ยน
+- Verification `%TEMP%\PCAutobackup-install-confirm-c6d77258bb9e46e2809ef0ed03249b77\verification.json`
+- Peak working set ของ live synthetic harness 143,556,608 bytes (ประมาณ 137 MiB); ไม่ใช่การรับประกัน RAM ของรอบจริง
+
+## แก้ transient Google request failure (2026-11-09)
+
+- สองรอบจริงจบด้วย generic HttpRequestException โดยไม่มี inner exception ในสถานะเดิม จึงยังสรุป root cause ระดับเครือข่ายไม่ได้ พบช่องว่างที่ upload-init และ OAuth refresh ไม่ retry, timeout ไม่ถูก retry ใน GoogleSession และสถานะ timeout อาจถูกจัดเป็น Cancelled
+- GoogleSession เพิ่ม bounded retry 6 attempts/backoff/jitter, timeout แปลงเป็น failure ที่มี request ID, retry token refresh และ 403 เฉพาะ rate limit; metadata response อ่านจนจบภายในขอบเขต retry ส่วน media download คง streaming
+- Upload จอง file IDs ล่วงหน้าเป็น batch 100 และใช้ stable ID ตลอด retry/restart; HTTP 409 เข้าสู่ reconciliation เดิมโดยไม่สร้าง ID ใหม่; data upload ที่ผลตอบรับสูญหายมี backoff ก่อน probe
+- เพิ่ม structured allowlist diagnostics: operation, attempts, status, exception type/HResult/HttpRequestError/socket code; ไม่มี raw exception message หรือข้อมูลลับ บันทึก final failure chain จาก ApplicationService ด้วย
+- ทดสอบอัตโนมัติเพิ่ม transport/timeout exhaustion, caller cancellation, OAuth refresh retry, transient/permanent HTTP errors, stable ID หลัง lost init acknowledgement และตรวจ log ไม่เปิดเผย secret; ปรับ regression เดิมที่ห้าม retry create ให้ตรวจ bounded retry กับ ID เดียวแทน
+- Release build ผ่าน และ automated tests 220/220 ผ่าน; final package Core SHA256 `2051B5A3718DA5CECE25BE0533687BE659B8F275E8DF666826730A03B42D31B0`
+- Live Drive fault-injection ผ่านสองชุดแยกจาก production: HTTP 503, lost upload-init acknowledgement (ConnectionReset), lost final data acknowledgement (timeout), persistent outage ครบ 6 attempts; รอบที่ล้มเหลวไม่เพิ่ม snapshot และชุดก่อนหน้ายังคงอ่านได้
+- Final fixture: 36 files / 65,591 bytes, 34 unique chunk objects, 2 successful snapshots; restore 36/36 ตรงทุก byte/SHA256, Junction alias entries 0, config จริง hash เดิม; report `%TEMP%\PCAutobackup-tests\drive-retry-3ad9c5c8a3d1438dbcf63c43ee16b75b\drive-test-result.json`
+- Log final live test `%LOCALAPPDATA%\PCAutobackup\logs\google-20168.jsonl` ยืนยันขั้นตอน/SocketError/timeout/recovered-after-probe; ไม่มีการทดสอบกับไฟล์ Project จริง
+- Peak working set ของ live fixture รอบแรก 145,883,136 bytes (ประมาณ 139 MiB); เป็น test harness ข้อมูลจำลอง ไม่ใช่การรับประกัน RAM ของ production
+- ติดตั้งสำเร็จ 2026-11-09 23:35:07 +07:00: hashes ตรง 817/817 files; configuration, HKCU startup, task XML (21:00), last-success marker ไม่เปลี่ยน; verification `%TEMP%\PCAutobackup-install-retry-a427c172109e479f84f8d04dca2bfa40\verification.json`
+- Tray ใหม่เริ่มรอบชดเชยตามพฤติกรรมเดิมเวลา 23:35:06 (Worker PID 14228); สถานะ Running ณ การตรวจหลังติดตั้ง ยังไม่อ้างว่ารอบจริงสำเร็จ ไม่มีการหยุด Worker
+
 # Project context — PC AutoBackup
+
+## ติดตั้งรุ่นคิวไฟล์เล็กหลังรอบเดิมจบ — 9 พฤศจิกายน 2026 เวลา 21:29 น.
+
+ผู้ใช้อนุญาตให้รอ Worker เดิมจบแล้วติดตั้งทับ โดยคงการตั้งค่าและตารางเดิม Worker PID 1676 เริ่ม 01:07:52 และจบ 21:29:31 ด้วย Failed: `An error occurred while sending the request.` ประมวลผล 168,468 ไฟล์ 64,088,974,343 bytes แต่ยังไม่มี snapshot commit จึงไม่ถือว่ารอบนี้สำรองครบ รอบ 21:00 ถูกข้ามด้วย application lock ตามที่ออกแบบไว้ ไม่กระทบรอบเดิม
+
+หลัง Worker ออก ติดตั้งจาก `artifacts/PCAutobackup-smallfiles-win-x64/install.ps1 -NoLaunch` สำเร็จ เทียบ SHA-256 payload 817/817 ตรง การตั้งค่าแบบ byte hash, startup และ Task Scheduler XML ก่อน–หลังตรงเดิม ตารางทุกวัน 21:00 และต้นทาง 2 รายการเดิม Installed Core ของ Desktop/Worker/Tray ตรงกัน: `6802B24B4391F341E5D5F7A510B028A5E2E3A2CC6AFB829627E916023289A350` เริ่ม Tray PID 12908 แล้วระบบตรวจ missed/failed round และเริ่ม Worker รุ่นใหม่ PID 15532 อัตโนมัติ 21:29:55 สถานะ Running ขณะตรวจหลังติดตั้ง ไม่ได้สั่ง backup ด้วยมือหรือใช้ข้อมูลจริงเป็น fixture การตรวจนี้ยืนยันการติดตั้ง ไม่ได้ยืนยันว่ารอบใหม่สำเร็จ
+
+หลักฐานใน Temp: `C:/Users/USER/AppData/Local/Temp/PCAutobackup-install-smallfiles-4f0a3b57dada49229c92a86d9e76b462/verification.json` และ `completed-run.json` รายการด้านล่างที่ระบุว่ายังไม่ติดตั้งเป็นสถานะก่อนหน้านี้
+
+## ปรับคิวไฟล์เล็ก — 9 พฤศจิกายน 2026
+
+ย้ายการ drain upload จากท้ายแต่ละไฟล์ไปท้ายการอ่านทุกต้นทาง คง bounded pending queue และการยกเลิก/รอ task ทั้งหมดเมื่อเกิดข้อผิดพลาด จึงใช้ concurrency 16 ข้ามไฟล์เล็กได้จริง พร้อม dedupe chunk ที่กำลังส่งหรือส่งสำเร็จแล้ว Snapshot commit ยังคงรอทุก object durable ลด ancestor checks ซ้ำต่อ entry เฉพาะช่วงประมาณขนาด (ยังตรวจ directory chain และ entry reparse) ส่วน actual read และ restore คง full-path check เดิม เพิ่ม fixture ทดสอบหลายไฟล์พร้อมกัน 2/16 งาน, byte-for-byte restore, duplicate content และ upload failure รุ่นนี้ยังไม่ติดตั้งทับ เพราะ Worker จริงยังทำงาน รุ่นแพ็กแยกอยู่ `artifacts/PCAutobackup-smallfiles-win-x64` ไม่แก้ executable ที่ Worker เดิมใช้อยู่
+
+วัด testhost ระหว่าง synthetic automated suite: working set 146,329,600 bytes, peak working set ณ จุดวัด 610,529,280 bytes รวม test runner และหลาย workload ไม่ใช่ Worker idle/production guarantee
+
+ผลตรวจรุ่นคิวไฟล์เล็ก: Build ผ่าน, automated suite 204/204 ผ่าน (48 ไฟล์เล็กยืนยัน concurrent uploads สูงสุด 16 และกู้คืน byte-for-byte ครบ) ทดสอบ Google Drive จริงด้วย fixture 3 ไฟล์ 16,439 bytes และ Junction 3 ตัวในคลังแยก `10pIwoCWH0BPt6Bsu2t5sWUt2mfJ8bErI` สำรอง 2 รอบยังมี 2 chunks, restore 3/3 ตรงทุก byte, alias ใน manifest = 0, config จริง hash เดิม ยังไม่ได้วัดอัตราเร่งของ production workload จึงไม่รับประกันจำนวนเท่าที่เร็วขึ้น Worker เดิม PID 1676 ยังทำงานและ installed Core hash เดิม ณ ตรวจ 02:10 น.
+
+## รองรับ Junction ภายในต้นทาง — 9 พฤศจิกายน 2026
+
+BackupEngine ข้าม junction/symlink ที่พบระหว่าง scan และ backup โดยไม่เดินตามลิงก์ จึงสำรองข้อมูลผ่านเส้นทางจริงในต้นทางที่เลือกเพียงครั้งเดียว และไม่วนซ้ำเมื่อมีลิงก์กลับไปยังต้นทาง รายการที่ข้ามแสดงเป็นคำเตือนภาษาไทย/อังกฤษ หากปลายทางอยู่นอกต้นทาง หาย หรือผ่าน reparse point อื่น จะระบุว่าไม่ได้รวมปลายทางและงด prune ทั้ง retention/quota รอบนั้น ชุดเก่าจึงยังอยู่แม้ retention=0 โดย quota ของชุดใหม่ยังตรวจตามเดิม ไม่สร้างลิงก์กลับตอน restore และไม่เปลี่ยนข้อห้าม reparse point สำหรับ restore, repository, source root หรือ unknown/cloud reparse tag
+
+เพิ่ม JunctionBackupTests ใช้เฉพาะ fixture ใน temporary directory: หลาย alias, cycle, scan เปิด/ปิด, round-trip, changed/deleted files, retention=0, external/dangling junction และ restore path safety ติดตั้งรุ่นแก้ไขทับในเครื่องแล้วตามคำขอผู้ใช้วันที่ 9 พฤศจิกายน 2026 (ยังไม่เผยแพร่): EXE exit 0, เทียบ payload 817/817 ตรง, application-data files ก่อนเริ่ม Tray ทั้ง 4 ไฟล์มี hash เดิม รวม configuration, startup และ Task Scheduler XML ตรงเดิม ตารางทุกวัน 21:00 และต้นทาง 2 รายการเดิม Installed Core SHA-256 `6CFE0ED7843B8C91D8736924AA37E1BB02D3F1555E9BA42E82C9B4AB30C43ADE` หลังเปิด Tray พบ Worker เริ่มอัตโนมัติจากการตรวจรอบค้างตามนโยบายเดิม ไม่ได้สั่ง backup ด้วยมือหรือใช้ข้อมูลจริงเป็น fixture ผลดิบอยู่ใน ignored `artifacts/install-junction-fix/verification.json` รายการ release ด้านล่างเป็นประวัติรุ่นก่อนหน้า
+
+ผลตรวจ: automated tests 201/201 ผ่าน วัด process `testhost` ระหว่างรัน suite ทั้งชุดได้ working set 199,081,984 bytes และ peak working set ณ เวลาสุ่มวัด 709,357,568 bytes ตัวเลขนี้รวม test runner และ synthetic workloads หลายกรณี ไม่ใช่การวัด Desktop/Tray idle หรือ Worker production และไม่ใช่เพดาน RAM ที่รับประกัน
 
 ตรวจ CI หลัง Release persistent-undo ผ่าน2/2 แล้ว ดาวน์โหลด EXE จาก Release มาติดตั้งทับ exit0 SHA256 EXE856CFD528A7174BC4DF6B300DDDEAAEEFED727FA0CD827CEE276A9A7A6D26FFE เทียบpayload816/816ตรง InstalledCore70A9C27081EE21082C149C30097E6A445E10297FD59E6044FEA6827D57C42C5B config/startup/taskXMLเดิมทุกค่า คง16/16และdaily21:00 เริ่มTrayจริงแล้ว ดู [รายงานติดตั้ง Release](docs/release-persistent-undo-install-verification-2026-11-09.md) เผยแพร่รายงานและเพิ่มผล816/816กับCI2/2ในรายละเอียดReleaseเดิม โดยไม่เปลี่ยนassetหรือตาราง
 
@@ -180,3 +250,17 @@ Progress featureติดตั้งในเครื่องแล้ว Cor
 เตรียมRelease v2026.11.08-idle-ram พร้อมตัวติดตั้งไฟล์เดียวและคู่มือHTML รุ่นนี้คงprogress%,processedMB/s,ETAและ16/16เวลา21:00 แต่เพิ่มคืนmanagedmemoryหลังงาน มีข้อจำกัดการวัดRAMก่อน–หลังตามรายงาน
 
 ตรวจติดตั้ง Release v2026.11.08-idle-ram ในเครื่องสำเร็จ exit 0 เทียบ SHA-256 กับ payload จาก build ตัวติดตั้งครบ 813 ไฟล์ ตรงทั้งหมด Installed Core F7BB6E24914827B1B222069634E9EEA3BDF134192BD701160F28D0F7B37765C3 Configuration/startup/scheduler XML ก่อน–หลังคงเดิม คง 16/16 และทุกวัน 21:00 เปิด Tray รุ่น Release แล้ว รายงาน docs/release-idle-ram-install-verification-2026-11-08.md
+
+2026-11-10 duplicate-name recovery: ตรวจ metadata คลังจริงแบบอ่านอย่างเดียว 74,448 objects พบ 1 ชื่อ chunk มี 2 file IDs ขนาดเท่ากัน 25,707 bytes MIME image/jp2 และ application/octet-stream สร้างต่างรอบ Ciphertext ต่างกัน แต่ AES-GCM และ keyed content HMAC ถูกต้องทั้งคู่ plaintext เท่ากัน สอดคล้องกับการค้นหากรอง MIME ในรุ่นเก่าที่มองไม่เห็นสำเนาแรก แล้วสร้างสำเนาใหม่ก่อนแก้ MIME discovery ไม่แก้/ลบข้อมูลจริงในขั้นวิเคราะห์
+
+เพิ่ม IAuthenticatedChunkStore: BackupEngine ส่ง callback ตรวจ AES-GCM/HMAC โดยไม่ส่งกุญแจให้ Google store; Find ยอมเลือกชื่อ chunk ซ้ำเมื่อทุกสำเนาผ่านตรวจ จำกัด 4 MiB + header ต่อสำเนา ล้าง cache เมื่อเปลี่ยน engine/key เลือก file ID ตาม ordinal เก็บทุกสำเนาเดิม ห้าม mutation/confirmation ยอมรับชื่อซ้ำ List รวม logical chunk และรวม physical bytes สำหรับ quota; owner/manifest ซ้ำยัง fail closed ข้อมูลเสีย/ต่าง content address ไม่ถูกเลือกข้าม ทดสอบ Release 252/252 และ Drive จำลองจริงผ่าน 36 ไฟล์ กู้คืนตรวจ 3 ครั้งรวม 108/108 ไม่มี alias Junction, repeat ไม่อัปโหลด chunk เพิ่ม, corrupted orphan duplicate หยุดโดยเก็บ 2 snapshots เดิมและกู้คืนได้ Peak harness 141,418,496 bytes ดู docs/duplicate-object-recovery-2026-11-10.md
+
+ติดตั้งรุ่นแก้ duplicate chunks เมื่อ 10 พฤศจิกายน 2026 เวลา 13:25:23 ตรวจไฟล์แพ็กเกจ 818/818 ตรง Core 39F8D994029008F5550917ED7DCFAEFC947F719E3A245D9C96D347258DAEE9C1 Configuration/startup/scheduler XML/previous success marker คงเดิม ตาราง 21:00 Tray เริ่มรอบปกติหลังเปิด 13:25:21 สถานะ Running ยังไม่ใช่ผลสำรองสำเร็จ รายงานติดตั้ง %TEMP%/PCAutobackup-install-duplicates-ca57975234034ad78d0f187d5214c155/verification.json
+
+รอบจริง 10 พฤศจิกายน 2026 เวลา 13:25 สำเร็จ 11 พฤศจิกายน 00:38:27 ใช้ 11 ชม. 13 นาที สำรอง 398,384 ไฟล์ 79,874,330,750 bytes มี ConnectionReset หนึ่งครั้งและยืนยันอัปโหลดเดิมด้วย probe HTTP 200 ตรวจโฟลเดอร์ปลายทางของ Junction จาก snapshot ครบ 154,738 ไฟล์และ 8,293 โฟลเดอร์ ทั้ง 9 Junction ไม่มีรายการ alias ใน manifest
+
+ลดคำขอ Drive สำหรับไฟล์เล็กโดยคงรูปแบบคลังเดิม ใช้ multipart สำหรับ chunk ใหม่ขนาดก่อนเข้ารหัสไม่เกิน 256 KiB และรวมการค้นหากับการสร้างภายใต้ mutation lease จึงใช้ 3 คำขอต่อ chunk ปกติ เทียบกับ 5 เดิม Retry ใช้ ID ที่จองไว้เดิมและยืนยันชื่อ ID ขนาดและ uploadId หลังส่ง เมื่อ snapshot เดิมมีอย่างน้อย 1,024 chunk ใช้รายการ metadata แบบแบ่งหน้าสำหรับ chunk ที่มีอยู่และตรวจซ้ำก่อน commit ชื่อซ้ำหรือผลไม่ชัดเจนกลับไปตรวจทีละชื่อ การทดสอบอัตโนมัติผ่าน 257 ข้อ
+
+ผล A/B Drive จริงบนไฟล์จำลอง 1,154 ไฟล์ 786,116 bytes และ Junction 3 จุด สำรองครั้งแรก 5,798 → 3,494 คำขอ 249.99 → 193.44 วินาที รอบไฟล์ไม่เปลี่ยน 1,172 → 25 คำขอ 40.59 → 20.57 วินาที กู้คืนด้วยรุ่นใหม่ทั้ง snapshot ใหม่และ snapshot รุ่นเดิมครบและตรงทุก byte ตรวจ alias ไม่พบรายการซ้ำ มีรายละเอียดวิธีวัดและ peak working set ใน docs/drive-small-files-2026-11-11.md
+
+ติดตั้งรุ่น multipart เมื่อ 11 พฤศจิกายน 2026 เวลา 10:47:43 ตรวจไฟล์ 819/819 ตรงแพ็กเกจ Core C274A08B88C564B51DD162790E98906D3AE17768E0139C85156DB9482590A8F5 คง configuration, startup, scheduler XML, status และ success marker เดิม ตาราง 21:00 เปิด Tray ข้ามการตรวจงานค้างเฉพาะตอนเปิดครั้งนี้ ไม่เริ่มรอบจริง รายงานติดตั้ง %TEMP%/PCAutobackup-install-small-multipart-10940ca7a657415cacd24b3fe8629a62/verification.json

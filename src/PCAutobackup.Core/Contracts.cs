@@ -40,6 +40,13 @@ public sealed class BackupSource
 
 public sealed record StoredObject(string Name, long Size, DateTimeOffset ModifiedUtc);
 
+// A remote store may encounter multiple physical copies of a content-addressed chunk.
+// The engine supplies authentication without exposing recovery keys to the store.
+internal interface IAuthenticatedChunkStore
+{
+    void SetChunkVerifier(Func<string, byte[], bool> verifier);
+}
+
 // All names are repository-relative forward-slash names, never arbitrary local paths.
 // Put is atomic from a reader's perspective; overwrite=false must preserve an existing object.
 public interface IBackupStore : IAsyncDisposable

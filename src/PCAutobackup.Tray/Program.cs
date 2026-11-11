@@ -43,7 +43,9 @@ internal static class Program
         _taskbarCreated = RegisterWindowMessage("TaskbarCreated");
         AddIcon();
         instance.Listen(() => PostMessage(_window, OpenMessage, 0, 0));
-        _ = DesktopRuntime.StartPendingBackupAsync(_directory, _configuration);
+        // An in-place update can reopen the tray without requesting a catch-up run.
+        if (!args.Contains("--skip-launch-check"))
+            _ = DesktopRuntime.StartPendingBackupAsync(_directory, _configuration);
         if (args.Contains("--open")) OpenSettings();
         while (GetMessage(out var message, 0, 0, 0) > 0)
         {
